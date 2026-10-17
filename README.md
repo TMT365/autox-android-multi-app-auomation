@@ -105,8 +105,6 @@ var SCREENSHOT_PATH = files.join(
 
 ---
 
----
-
 ## 文档导航
 
 | 文档 | 内容 |
