@@ -48,6 +48,65 @@
 
 ---
 
+## 按机型快速配置（防杀后台）
+
+不同 ROM 杀后台机制差异很大，先按品牌查表。**关键目标是：让 AutoX 的无障碍
+服务能长期在后台存活**。
+
+### 电池优化 / 自启动路径
+
+| 品牌 | 关键路径 |
+|---|---|
+| 小米 MIUI | 设置 → 电池 → 应用后台管理 → AutoX → 无限制 |
+| 华为 EMUI / HarmonyOS | 设置 → 电池 → 启动管理 → AutoX → 手动管理 → 全部勾选 |
+| OPPO ColorOS | 设置 → 电池 → 更多设置 → 关闭"睡眠待机优化" |
+| vivo FuntouchOS | 设置 → 电池 → 后台高耗电 → AutoX → 允许 |
+| 三星 OneUI | 设置 → 电池 → 后台使用限制 → AutoX → 不优化 |
+| 一加 OxygenOS | 设置 → 电池 → 电池优化 → AutoX → 不优化 |
+| 原生 Android | 设置 → 应用 → AutoX → 电池 → 不优化 |
+
+### 跨品牌通用 3 步（务必都做）
+
+1. **锁定后台任务**：最近任务 → 找到 AutoX 卡片 → **下拉 / 长按 → 点击锁定图标**
+2. **允许通知**：设置 → 通知管理 → AutoX → 允许通知（部分 ROM 会先杀"无通知应用"）
+3. **允许自启动**：设置 → 应用 → AutoX → 自启动 → 开（部分品牌叫"关联启动"）
+
+完整步骤与品牌图示见 [`INSTALL.md §4`](INSTALL.md)。
+
+---
+
+## 常见问题快速排错
+
+> 90% 的报错都是下面 8 种之一。先看 Toast 文字，对号入座。
+
+| Toast 报错 | 一句话解决 |
+|---|---|
+| 请先开启 AutoX 无障碍服务 | AutoX → 菜单 → 无障碍服务 → 开启；若仍无效重启 AutoX |
+| 未检测到学习通 APP / 豆包 APP | 桌面长按 APP 图标 → 应用信息 → 复制真实包名 → 改 `PACKAGE.*` |
+| 脚本就绪但按音量减无反应 | AutoX 被系统杀后台 → 按上节"按机型配置"重新设置一遍 |
+| 截图失败，请检查存储权限 | Android 11+ 要额外开"所有文件访问权限"；或见下方改路径 |
+| 豆包回复超时（90s） | ① 检查 4G/5G/WiFi ② 调大 `TIMEOUT.AI_RESPONSE` 至 120000 |
+| 抓取豆包回复为空 | APP 版本改了控件结构，开 `DEBUG=true` 看日志，按 [`ADAPTATION.md`](docs/ADAPTATION.md) 更新 ID |
+| 找不到答题输入框 | 手动确认在学习通"作业答题页"（含输入框的那一页），不是列表/已提交/讨论页 |
+| 长按输入框没有"粘贴"菜单 | 调大 `DELAY.LONG_PRESS` 到 1500；或改用 `inputBox.setText(getClip())` 直接写 |
+
+### Android 11+ 截图失败专用方案
+
+修改脚本顶部 `SCREENSHOT_PATH` 为应用专属目录，绕过作用域存储限制：
+
+```javascript
+var SCREENSHOT_PATH = files.join(
+    context.getExternalFilesDir(null).getAbsolutePath(),
+    "AutoX_Screenshot.png"
+);
+```
+
+完整 30+ 故障与排查流程见 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)。
+
+---
+
+---
+
 ## 文档导航
 
 | 文档 | 内容 |
