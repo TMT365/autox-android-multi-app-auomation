@@ -1,0 +1,52 @@
+# ==================== AutoX.js 作业助手项目 ====================
+# 本项目仅用于无障碍 API 与 AutoX.js 编程技术的学习研究。
+# 严禁将本项目用于作业/考试作弊、代刷网课等违规行为。
+# 详见 LICENSE 与 docs/RISK.md 中的风险提示。
+# =========================================================
+
+# ---------- Node / 构建产物（如果引入构建步骤） ----------
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- 编辑器 / 系统临时文件 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.iml
+.project
+.classpath
+.settings/
+
+# ---------- AutoX.js 运行时产物（手机端，不应入库） ----------
+# 截图本地缓存
+AutoX_Screenshot*.png
+autojs_screenshot*.png
+
+# AutoX 本地日志（如果开发者把手机端日志导出到项目目录）
+autojs_logs/
+*.autojs.log
+
+# ---------- 测试 / 临时文件 ----------
+*.tmp
+*.bak
+*.orig
+test-output/
+coverage/
+
+# ---------- 敏感信息 ----------
+.env
+.env.local
+*.pem
+*.key
+secrets/
