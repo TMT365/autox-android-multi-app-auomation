@@ -422,9 +422,13 @@ function loadFloaterLayout() {
         if (content && content.charCodeAt && content.charCodeAt(0) === 0xFEFF) {
             content = content.substring(1);
         }
-        // 2) 去掉 XML 声明 <?xml ... ?> —— Rhino new XML() 不接受文档开头的 PI
-        //    错误:processing instructions must not start with xml
-        content = String(content).replace(/^\s*<\?xml[^?]*\?>\s*/, "");
+        // 2) 剥除所有 leading non-element 内容（XML 声明 + 注释 + 空白）
+        //    Rhino new XML() 只接受单 root element,任何 leading PI / 注释都会让它
+        //    报 "XML objects may contain at most one node"
+        content = String(content).replace(
+            /^\s*(?:<\?xml[^?]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*/,
+            ""
+        );
         // 3) 转成 Rhino XML 对象 —— floaty.window() 期望 XML 对象,直接传字符串会 NPE
         try {
             return new XML(content);

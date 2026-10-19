@@ -137,11 +137,14 @@ if (xml) {
         xml = xml.substring(1);
         console.log("[INFO] 已去除 UTF-8 BOM");
     }
-    // 去 XML 声明 <?xml ... ?> —— Rhino new XML() 不接受文档开头的 PI
-    var strippedDecl = xml.replace(/^\s*<\?xml[^?]*\?>\s*/, "");
+    // 去 XML 声明 + leading 注释 —— Rhino new XML() 只接受单 root element
+    var strippedDecl = xml.replace(
+        /^\s*(?:<\?xml[^?]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*/,
+        ""
+    );
     if (strippedDecl !== xml) {
         xml = strippedDecl;
-        console.log("[INFO] 已去除 XML 声明");
+        console.log("[INFO] 已去除 XML 声明 / leading 注释");
     }
     // 转 Rhino XML 对象 —— floaty.window 期望 XML 对象,字符串会 NPE
     var xmlObj = null;
