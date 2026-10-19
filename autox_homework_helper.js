@@ -28,6 +28,13 @@
  *    · 旧的 PACKAGE/TIMEOUT/DELAY/SELECTOR/COORD/NEXT_QUESTION_KEY/ENABLE_FLOATER/
  *      ENABLE_HOTKEY/FLOATER_XML_PATH 全部下沉为 DEFAULT_*（仅作回退数据源，不再被运行时引用）
  *
+ *  【v1.6 新增】
+ *    · 通用控件查找 findControl()/tryMatchStrategy()：多策略 + 相对区域过滤 + 裁决
+ *    · 安全点击 clickNodeSafe()：自身可点 -> 可点击祖先 -> 实时 bounds 中心
+ *    · config.controls 新增，支持 nextButton / answerInput / option 三类控件策略
+ *    · 适配学习通新版：android.view.View 绘制文字，id/desc 为空，靠 text+clickable 定位
+ *    · 配套 layout_dump.js：控件树导出工具（写文件 + 剪贴板 + 控制台）
+ *
  *  【v1.4 简化】
  *    · 部署要求统一：autox_homework_helper.js、floater.xml、config.json 三个文件必须在同一目录
  *    · floaterXmlPath 字段已弃用,config.json 不再需要指定
@@ -60,7 +67,7 @@
 
 // ==================== 版本 & 全局开关 ====================
 
-var SCRIPT_VERSION = "1.5.0";           // 当前脚本版本
+var SCRIPT_VERSION = "1.6.0";           // 当前脚本版本
 var DEBUG = false;                      // 调试模式：true 时输出详细日志
 var STATS = { runs: 0, success: 0, fail: 0, lastError: "" };  // 运行时统计
 
@@ -183,6 +190,49 @@ var DEFAULT_CONFIG = {
             firstPhoto:   { x: 120, y:  500 },
             photoConfirm: { x: 990, y:  100 }
         }
+    },
+
+    // 控件查找策略（v1.6）
+    //   每个控件给出多个 match 策略，按数组顺序尝试，第一个命中即返回。
+    //   策略字段：
+    //     text / textContains / textMatches / desc / id / className  匹配条件
+    //     clickable / visibleToUser / enabled                        布尔过滤
+    //     region: bottom | top | bottomRight | center | any          相对区域过滤
+    //     pick:   bottomMost | rightMost | largest | first           多候选裁决
+    //   注意：学习通新版按钮是 android.view.View 绘制文字，id/desc 为空，
+    //        必须用 text + clickable + visibleToUser 组合定位。
+    controls: {
+        nextButton: {
+            timeout: 3000,
+            match: [
+                { text: "下一题", className: "android.view.View",
+                  clickable: true, visibleToUser: true,
+                  region: "bottom", pick: "bottomMost" },
+                { textContains: "下一题", clickable: true, visibleToUser: true,
+                  pick: "bottomMost" },
+                { textMatches: "^\\s*(下一题|继续|Next)\\s*$", clickable: true,
+                  pick: "bottomMost" }
+            ]
+        },
+        answerInput: {
+            timeout: 5000,
+            match: [
+                { className: "android.widget.EditText", visibleToUser: true,
+                  enabled: true, pick: "first" },
+                { id: "editText2", clickable: true },
+                { textContains: "请输入", className: "android.widget.EditText",
+                  visibleToUser: true }
+            ]
+        },
+        option: {
+            timeout: 3000,
+            match: [
+                { textMatches: "^\\s*[ABCD][.、．\\s]", className: "android.widget.TextView",
+                  visibleToUser: true, pick: "first" },
+                { textMatches: "^\\s*[ABCD]\\s*$", className: "android.widget.TextView",
+                  visibleToUser: true, pick: "first" }
+            ]
+        }
     }
 };
 
@@ -277,6 +327,15 @@ function loadConfig() {
                     var cv = csrc[kk];
                     if (cv && typeof cv.x === "number" && typeof cv.y === "number") cdst[kk] = cv;
                 }
+            }
+        }
+        if (parsed.controls && typeof parsed.controls === "object") {
+            for (var ctr in cfg.controls) {
+                if (!cfg.controls.hasOwnProperty(ctr)) continue;
+                var pc = parsed.controls[ctr];
+                if (!pc || typeof pc !== "object") continue;
+                if (typeof pc.timeout === "number" && pc.timeout > 0) cfg.controls[ctr].timeout = pc.timeout;
+                if (Array.isArray(pc.match)) cfg.controls[ctr].match = pc.match;
             }
         }
     } catch (e) {
@@ -647,6 +706,131 @@ function findByPriority(ids, descs, texts) {
     return null;
 }
 
+/* ====================================================================
+ *  v1.6 通用控件查找（多策略 + 唯一性裁决）
+ *  解决：学习通新版按钮用 android.view.View 绘制文字，id/desc 为空，
+ *        只能靠 text + clickable + visibleToUser 组合定位。
+ * ================================================================== */
+
+/**
+ * 按策略列表查找控件，返回第一个命中的 UiObject，超时返回 null
+ * @param {Object} spec  { timeout: ms, match: [strategy, ...] }
+ * @param {number} [timeoutMs] 覆盖 spec.timeout
+ */
+function findControl(spec, timeoutMs) {
+    if (!spec || !spec.match || !spec.match.length) return null;
+    var timeout = timeoutMs || spec.timeout || 3000;
+    var deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+        for (var i = 0; i < spec.match.length; i++) {
+            var node = tryMatchStrategy(spec.match[i]);
+            if (node) {
+                logDebug("findControl 命中策略#" + i +
+                    " className=" + safeCall(node, "className") +
+                    " text=" + safeCall(node, "text"));
+                return node;
+            }
+        }
+        sleep(config.delays.pollInterval || 600);
+    }
+    return null;
+}
+
+/**
+ * 执行单条匹配策略：构建选择器 -> find() -> 区域过滤 -> 裁决
+ */
+function tryMatchStrategy(s) {
+    if (!s) return null;
+    try {
+        // ---- 1) 组合选择器（所有条件 AND）----
+        var sel = null;
+        if (typeof s.text === "string")          sel = sel ? sel.text(s.text) : text(s.text);
+        if (typeof s.textContains === "string")  sel = sel ? sel.textContains(s.textContains) : textContains(s.textContains);
+        if (typeof s.textMatches === "string")   sel = sel ? sel.textMatches(s.textMatches) : textMatches(s.textMatches);
+        if (typeof s.desc === "string")          sel = sel ? sel.desc(s.desc) : desc(s.desc);
+        if (typeof s.id === "string")            sel = sel ? sel.id(s.id) : id(s.id);
+        if (typeof s.className === "string")     sel = sel ? sel.className(s.className) : className(s.className);
+        if (typeof s.clickable === "boolean")    sel = sel ? sel.clickable(s.clickable) : clickable(s.clickable);
+        if (typeof s.visibleToUser === "boolean") sel = sel ? sel.visibleToUser(s.visibleToUser) : visibleToUser(s.visibleToUser);
+        if (typeof s.enabled === "boolean")      sel = sel ? sel.enabled(s.enabled) : enabled(s.enabled);
+        if (!sel) return null;
+
+        var nodes = sel.find();
+        if (!nodes || !nodes.length) return null;
+
+        // ---- 2) 相对区域过滤（用屏幕比例，不用绝对坐标）----
+        var W = device.width, H = device.height;
+        var region = s.region || "any";
+        var filtered = [];
+        for (var i = 0; i < nodes.length; i++) {
+            var n = nodes[i];
+            var b = null;
+            try { b = n.bounds(); } catch (e) {}
+            if (!b || b.width() <= 0 || b.height() <= 0) continue;
+            // 排除全屏遮罩类节点
+            if (b.width() > W * 0.95 && b.height() > H * 0.95) continue;
+
+            var cy = b.centerY(), cx = b.centerX();
+            if (region === "bottom" && cy < H * 0.7) continue;
+            if (region === "top" && cy > H * 0.3) continue;
+            if (region === "bottomRight" && (cy < H * 0.6 || cx < W * 0.5)) continue;
+            if (region === "center" && (cy < H * 0.25 || cy > H * 0.75)) continue;
+            filtered.push(n);
+        }
+        if (!filtered.length) return null;
+
+        // ---- 3) 多候选裁决 ----
+        var pick = s.pick || "first";
+        var best = filtered[0];
+        if (pick === "bottomMost" || pick === "rightMost" || pick === "largest") {
+            var bestScore = -1;
+            for (var j = 0; j < filtered.length; j++) {
+                var bb = filtered[j].bounds();
+                var score;
+                if (pick === "bottomMost") score = bb.centerY();
+                else if (pick === "rightMost") score = bb.centerX();
+                else score = bb.width() * bb.height();
+                if (score > bestScore) { bestScore = score; best = filtered[j]; }
+            }
+        }
+        return best;
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * 安全点击控件：
+ *   1) 节点自身可点 -> node.click()
+ *   2) 否则向上找可点击祖先（最多 6 层）
+ *   3) 最后用节点实时 bounds 中心坐标点击（非硬编码坐标）
+ */
+function clickNodeSafe(node) {
+    if (!node) return false;
+    try {
+        if (node.clickable && node.clickable() && node.click()) return true;
+    } catch (e) {}
+    var p = null;
+    try { p = node.parent(); } catch (e) {}
+    for (var i = 0; i < 6 && p; i++) {
+        try {
+            if (p.clickable && p.clickable() && p.click()) return true;
+        } catch (e) {}
+        try { p = p.parent(); } catch (e) { p = null; }
+    }
+    try {
+        var b = node.bounds();
+        if (b && b.width() > 0) return click(b.centerX(), b.centerY());
+    } catch (e) {}
+    return false;
+}
+
+/** 安全调用 UiObject 的取值方法，异常返回空串 */
+function safeCall(node, method) {
+    try { return node[method] ? String(node[method]()) : ""; } catch (e) { return ""; }
+}
+
 /**
  * 等待控件出现，最多 timeout 毫秒；超时返回 null 并弹 Toast
  */
@@ -666,23 +850,8 @@ function waitForControl(ids, descs, texts, name_desc) {
  */
 function clickSmart(ids, descs, texts, coord, desc) {
     var w = findByPriority(ids, descs, texts);
-    if (w) {
-        try {
-            // 优先调用控件自身的 click()
-            if (w.click && w.clickable && w.clickable()) {
-                w.click();
-                return true;
-            }
-            // 否则按控件中心点击
-            var b = w.bounds();
-            if (b) {
-                click(b.centerX(), b.centerY());
-                return true;
-            }
-        } catch (e) {
-            console.warn("控件点击失败，降级到坐标：" + (desc || ""), e.message);
-        }
-    }
+    // v1.6: 统一走 clickNodeSafe（自身可点 -> 可点祖先 -> 实时 bounds 中心）
+    if (w && clickNodeSafe(w)) return true;
     // 降级：使用坐标
     if (coord) {
         click(coord.x, coord.y);

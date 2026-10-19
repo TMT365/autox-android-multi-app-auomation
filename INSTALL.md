@@ -209,6 +209,22 @@ var SCREENSHOT_PATH = files.join(context.getExternalFilesDir(null).getAbsolutePa
   - `第 N 题完成` —— 全流程成功
   - `失败原因：xxx` —— 失败定位
 
+### 控件树导出（layout_dump.js）
+
+找不到控件 / 想知道真实 `text`、`className`、`bounds` 时：
+
+1. 把 `layout_dump.js` 与主脚本放在同一目录
+2. 在 AutoX 中运行 `layout_dump.js`
+3. 5 秒内切到目标页面（如学习通答题页）
+4. 自动导出，结果同时写入：
+   - 同目录 `layout_dump.txt`（完整控件树）
+   - 系统剪贴板（前 50000 字符，可直接粘贴）
+   - AutoX 控制台（前 120 行）
+5. 之后按**音量减**可随时重新抓取，按**音量加**退出
+
+> 学习通新版按钮常为 `android.view.View` 且 `id`/`desc` 为空，
+> 请优先看 `text` + `[clickable]` + `bounds` 三个属性。
+
 ---
 
 ## 8. 卸载 / 停止

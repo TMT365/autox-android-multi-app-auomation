@@ -7,6 +7,39 @@
 
 ---
 
+## [1.6.0] - 2026-10-19
+
+### 新增
+- **通用控件查找 `findControl(spec, timeout)`**：多策略按序尝试，每条策略支持
+  `text / textContains / textMatches / desc / id / className` 匹配，
+  `clickable / visibleToUser / enabled` 过滤，`region` 相对区域过滤，
+  `pick` 多候选裁决（bottomMost / rightMost / largest / first）
+- **安全点击 `clickNodeSafe(node)`**：自身可点 → 向上找可点击祖先（6 层）→
+  节点实时 `bounds` 中心坐标点击；不再依赖硬编码坐标
+- **`config.controls` 配置段**：`nextButton` / `answerInput` / `option`
+  三类控件的默认策略，可被 `config.json` 覆盖
+- **`layout_dump.js` 控件树导出工具**：一键导出当前页面完整控件树到
+  `layout_dump.txt` + 剪贴板 + 控制台，解决"手机上看不到/复制不了控件属性"
+
+### 适配
+- 学习通新版按钮使用 `android.view.View` 绘制文字，`id` / `desc` 为空，
+  新策略以 `text + clickable + visibleToUser` 组合定位
+- 选项 ABCD 为 `android.widget.TextView`，用 `textMatches("^[ABCD][.、．\\s]")` 匹配
+- `clickSmart()` 内部改用 `clickNodeSafe()`
+
+---
+
+## [1.5.0] - 2026-10-19
+
+### 新增
+- 悬浮窗 **▶ 开始按钮** + `STATE.ready` 状态机：未启动时按钮绿色高亮，
+  音量减被忽略；点开始后按钮变灰"下一题"
+- 悬浮窗**缩小按钮** `btn_min`（`−` / `+` 切换），最小化后只保留标题栏
+- 拖拽监听改挂 `title_bar`，加 5px 阈值，避免与按钮点击冲突
+- 视觉强化：窗口 220×320、标题 🎓 + 黄色 13sp、开始按钮 40dp
+
+---
+
 ## [1.4.0] - 2026-10-19
 
 ### 简化部署
@@ -21,6 +54,16 @@
 - `config.json` 不存在 → 用 `DEFAULT_CONFIG`（行为与 v1.3 一致）
 - `config.json` 解析失败 → WARN + 回退默认，绝不抛错
 - floater.xml 不存在 → ERROR + 提示路径，不再静默降级到按键模式
+
+---
+
+## [1.3.0] - 2026-10-19
+
+### 新增
+- 外部配置文件 `config.json`（v1 schema）：`apps` 应用注册表、`timeouts`、
+  `delays`、`coords`
+- `loadConfig()`：配置缺失 / 解析失败 / 版本不符时 WARN + 回退 `DEFAULT_CONFIG`
+- 新增应用（如替换 AI 应用）只需扩展 `apps.<id>` 并改 `homeworkApp` / `aiApp`
 
 ---
 
