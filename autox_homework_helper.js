@@ -76,7 +76,7 @@
 
 // ==================== 版本 & 全局开关 ====================
 
-var SCRIPT_VERSION = "1.7.0";           // 当前脚本版本
+var SCRIPT_VERSION = "1.7.1";           // 当前脚本版本
 var DEBUG = false;                      // 调试模式：true 时输出详细日志
 var STATS = { runs: 0, success: 0, fail: 0, lastError: "" };  // 运行时统计
 
@@ -154,14 +154,15 @@ var DEFAULT_CONFIG = {
                 "所有答案输出不要多余开场白，直接输出答案内容。"
             ].join("\n"),
             selectors: {
-                inputBoxId:    ["msg_et", "et_message", "input_edit"],
+                inputBoxId:    ["input_text", "msg_et", "et_message", "input_edit"],
                 inputBoxDesc:  ["输入消息", "输入框", "请输入消息"],
                 sendBtnDesc:   ["发送"],
-                sendBtnId:     ["send_btn", "iv_send", "btn_send"],
-                attachBtnId:   ["iv_plus", "iv_more", "btn_more"],
-                attachBtnDesc: ["更多功能", "附件"],
-                albumDesc:     ["相册", "图片", "从相册选择", "从手机相册选择"],
-                albumText:     ["相册", "图片"],
+                sendBtnId:     ["action_send_container", "send_btn", "iv_send", "btn_send"],
+                attachBtnId:   ["iv_action_menu_entrance", "action_menu_entrance",
+                                "iv_plus", "iv_more", "btn_more"],
+                attachBtnDesc: ["更多面板", "更多功能", "附件"],
+                albumDesc:     ["相册", "图片", "照片", "从相册选择", "从手机相册选择"],
+                albumText:     ["相册", "图片", "照片"],
                 loadingDesc:   ["生成中", "正在生成", "停止生成"],
                 finishedDesc:  ["重新生成", "复制", "已生成"]
             }
@@ -260,45 +261,53 @@ var DEFAULT_CONFIG = {
 
     // AI APP 的扫描角色（v1.7）—— 同样支持被 config.json 覆盖
     aiControls: {
+        // 以下按豆包真机 dump（com.larus.nova）校准：
+        //   输入框   EditText id=.../input_text  text="发消息或按住说话"
+        //   添加图片 desc="更多面板" 的 ImageView，父容器 action_menu_entrance 可点
         inputBox: {
             timeout: 2000,
             match: [
+                { idMatches: ".*:id/input_text$", className: "android.widget.EditText",
+                  visibleToUser: true, pick: "first" },
+                { textContains: "发消息", className: "android.widget.EditText",
+                  visibleToUser: true, pick: "first" },
                 { className: "android.widget.EditText", visibleToUser: true,
-                  enabled: true, pick: "largest" },
-                { textContains: "输入消息", visibleToUser: true, pick: "first" },
-                { textContains: "发消息", visibleToUser: true, pick: "first" }
+                  enabled: true, pick: "largest" }
             ]
         },
         attachBtn: {
             timeout: 2000,
             match: [
-                { desc: "更多功能", clickable: true, visibleToUser: true, pick: "first" },
-                { descContains: "附件", clickable: true, visibleToUser: true, pick: "first" },
-                { text: "+", clickable: true, visibleToUser: true, pick: "first" }
+                { desc: "更多面板", visibleToUser: true, pick: "first" },
+                { descContains: "更多面板", visibleToUser: true, pick: "first" },
+                { idMatches: ".*:id/action_menu_entrance$", clickable: true,
+                  visibleToUser: true, pick: "first" },
+                { descContains: "更多", visibleToUser: true, pick: "first" }
             ]
         },
         albumOption: {
             timeout: 2000,
             match: [
-                { text: "相册", clickable: true, visibleToUser: true, pick: "first" },
-                { descContains: "相册", clickable: true, visibleToUser: true, pick: "first" },
-                { text: "图片", clickable: true, visibleToUser: true, pick: "first" }
+                { text: "相册", visibleToUser: true, pick: "first" },
+                { text: "照片", visibleToUser: true, pick: "first" },
+                { descContains: "相册", visibleToUser: true, pick: "first" },
+                { text: "图片", visibleToUser: true, pick: "first" }
             ]
         },
         photoConfirm: {
             timeout: 2000,
             match: [
-                { text: "完成", clickable: true, visibleToUser: true, pick: "first" },
-                { text: "确定", clickable: true, visibleToUser: true, pick: "first" },
+                { text: "完成", visibleToUser: true, pick: "first" },
+                { text: "确定", visibleToUser: true, pick: "first" },
                 { descContains: "完成", visibleToUser: true, pick: "first" }
             ]
         },
         sendBtn: {
             timeout: 2000,
             match: [
-                { desc: "发送", clickable: true, visibleToUser: true, pick: "first" },
-                { text: "发送", clickable: true, visibleToUser: true, pick: "first" },
-                { id: "send_btn", clickable: true, pick: "first" }
+                { desc: "发送", visibleToUser: true, pick: "first" },
+                { text: "发送", visibleToUser: true, pick: "first" },
+                { idMatches: ".*:id/action_send.*", visibleToUser: true, pick: "first" }
             ]
         }
     }
@@ -803,6 +812,8 @@ function findByPriority(ids, descs, texts) {
     if (ids) {
         for (i = 0; i < ids.length; i++) {
             try { w = id(ids[i]).findOnce(); if (w) return w; } catch (e) {}
+            // 兼容完整 id（真机节点是 "com.larus.nova:id/input_text" 形式）
+            try { w = idMatches(".*:id/" + ids[i] + "$").findOnce(); if (w) return w; } catch (e) {}
         }
     }
     if (descs) {
@@ -1464,7 +1475,7 @@ function doubaoUploadAndAsk() {
     var aiSel = config.apps[config.aiApp].selectors;
     var aiCo  = config.coords[config.aiApp];
     // A0. 如果不在聊天界面，先尝试进入（点"新建对话"）
-    if (!findByPriority(aiSel.inputBoxId, aiSel.inputBoxDesc, null)) {
+    if (!findByPriority(aiSel.inputBoxId, aiSel.inputBoxDesc, ["发消息或按住说话"])) {
         console.log("AI APP 当前不在聊天界面，尝试新建对话…");
         var newChat = findByPriority(null,
             ["新建对话", "开始聊天", "发起对话", "发消息", "新建聊天"], null);

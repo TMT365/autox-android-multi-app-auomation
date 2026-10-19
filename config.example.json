@@ -37,6 +37,7 @@
       "prompt": "识别图片中的所有试题，区分题型：\n①选择题（单选/多选）：只输出选项答案，不要任何解析、不要多余文字。示例：A 或 AB\n②简答题：精简答案，去除废话，答案排版干净，方便一键复制；不要多余解释\n所有答案输出不要多余开场白，直接输出答案内容。",
       "selectors": {
         "inputBoxId": [
+          "input_text",
           "msg_et",
           "et_message",
           "input_edit"
@@ -50,28 +51,34 @@
           "发送"
         ],
         "sendBtnId": [
+          "action_send_container",
           "send_btn",
           "iv_send",
           "btn_send"
         ],
         "attachBtnId": [
+          "iv_action_menu_entrance",
+          "action_menu_entrance",
           "iv_plus",
           "iv_more",
           "btn_more"
         ],
         "attachBtnDesc": [
+          "更多面板",
           "更多功能",
           "附件"
         ],
         "albumDesc": [
           "相册",
           "图片",
+          "照片",
           "从相册选择",
           "从手机相册选择"
         ],
         "albumText": [
           "相册",
-          "图片"
+          "图片",
+          "照片"
         ],
         "loadingDesc": [
           "生成中",
@@ -213,20 +220,22 @@
       "timeout": 2000,
       "match": [
         {
+          "idMatches": ".*:id/input_text$",
           "className": "android.widget.EditText",
-          "visibleToUser": true,
-          "enabled": true,
-          "pick": "largest"
-        },
-        {
-          "textContains": "输入消息",
           "visibleToUser": true,
           "pick": "first"
         },
         {
           "textContains": "发消息",
+          "className": "android.widget.EditText",
           "visibleToUser": true,
           "pick": "first"
+        },
+        {
+          "className": "android.widget.EditText",
+          "visibleToUser": true,
+          "enabled": true,
+          "pick": "largest"
         }
       ]
     },
@@ -234,20 +243,23 @@
       "timeout": 2000,
       "match": [
         {
-          "desc": "更多功能",
+          "desc": "更多面板",
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "descContains": "更多面板",
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "idMatches": ".*:id/action_menu_entrance$",
           "clickable": true,
           "visibleToUser": true,
           "pick": "first"
         },
         {
-          "descContains": "附件",
-          "clickable": true,
-          "visibleToUser": true,
-          "pick": "first"
-        },
-        {
-          "text": "+",
-          "clickable": true,
+          "descContains": "更多",
           "visibleToUser": true,
           "pick": "first"
         }
@@ -258,19 +270,21 @@
       "match": [
         {
           "text": "相册",
-          "clickable": true,
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "text": "照片",
           "visibleToUser": true,
           "pick": "first"
         },
         {
           "descContains": "相册",
-          "clickable": true,
           "visibleToUser": true,
           "pick": "first"
         },
         {
           "text": "图片",
-          "clickable": true,
           "visibleToUser": true,
           "pick": "first"
         }
@@ -281,13 +295,11 @@
       "match": [
         {
           "text": "完成",
-          "clickable": true,
           "visibleToUser": true,
           "pick": "first"
         },
         {
           "text": "确定",
-          "clickable": true,
           "visibleToUser": true,
           "pick": "first"
         },
@@ -303,19 +315,17 @@
       "match": [
         {
           "desc": "发送",
-          "clickable": true,
           "visibleToUser": true,
           "pick": "first"
         },
         {
           "text": "发送",
-          "clickable": true,
           "visibleToUser": true,
           "pick": "first"
         },
         {
-          "id": "send_btn",
-          "clickable": true,
+          "idMatches": ".*:id/action_send.*",
+          "visibleToUser": true,
           "pick": "first"
         }
       ]

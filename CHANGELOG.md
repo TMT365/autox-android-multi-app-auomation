@@ -7,6 +7,32 @@
 
 ---
 
+## [1.7.1] - 2026-10-19
+
+### 豆包真机 dump 校准（com.larus.nova）
+
+| 控件 | 实测 |
+|---|---|
+| 输入框 | `EditText id=.../input_text`，text=`"发消息或按住说话"` |
+| 添加图片 | `ImageView desc="更多面板"`，可点父容器 `action_menu_entrance` |
+| 相机入口 | `desc="相机"` / `id=.../action_entrance` |
+| 发送区 | `id=.../action_send_container`（未输入时 invisible） |
+
+### 修改
+- `aiControls.inputBox`：首选 `idMatches(".*:id/input_text$")`，其次
+  `textContains("发消息")`，最后 EditText + `pick: largest`
+- `aiControls.attachBtn`：首选 `desc="更多面板"`（**不是"更多功能"**），
+  其次 `descContains("更多面板")` / `idMatches(".*:id/action_menu_entrance$")`
+- `aiControls.sendBtn`：`desc/text="发送"` + `idMatches(".*:id/action_send.*")`
+- `apps.doubao.selectors` 全部加入真机 id（`input_text` /
+  `action_menu_entrance` / `action_send_container`）
+- `findByPriority()` 的 id 匹配兼容完整 id：同时尝试
+  `id(x)` 与 `idMatches(".*:id/x$")`
+- A0 闲聊界面检测增加 text `"发消息或按住说话"`
+- SCRIPT_VERSION 1.7.0 → 1.7.1
+
+---
+
 ## [1.7.0] - 2026-10-19
 
 ### 新架构：识别与定位分离
