@@ -418,11 +418,14 @@ function loadFloaterLayout() {
     log("INFO", "floater 布局: " + FLOATER_XML_PATH);
     try {
         var content = files.read(FLOATER_XML_PATH);
-        // 1) 去掉可能的 UTF-8 BOM（Windows 编辑器常加）
+        // 1) 去掉 UTF-8 BOM（Windows 编辑器常加）
         if (content && content.charCodeAt && content.charCodeAt(0) === 0xFEFF) {
             content = content.substring(1);
         }
-        // 2) 转成 Rhino XML 对象 —— floaty.window() 期望 XML 对象,直接传字符串会 NPE
+        // 2) 去掉 XML 声明 <?xml ... ?> —— Rhino new XML() 不接受文档开头的 PI
+        //    错误:processing instructions must not start with xml
+        content = String(content).replace(/^\s*<\?xml[^?]*\?>\s*/, "");
+        // 3) 转成 Rhino XML 对象 —— floaty.window() 期望 XML 对象,直接传字符串会 NPE
         try {
             return new XML(content);
         } catch (e1) {

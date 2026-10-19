@@ -137,6 +137,12 @@ if (xml) {
         xml = xml.substring(1);
         console.log("[INFO] 已去除 UTF-8 BOM");
     }
+    // 去 XML 声明 <?xml ... ?> —— Rhino new XML() 不接受文档开头的 PI
+    var strippedDecl = xml.replace(/^\s*<\?xml[^?]*\?>\s*/, "");
+    if (strippedDecl !== xml) {
+        xml = strippedDecl;
+        console.log("[INFO] 已去除 XML 声明");
+    }
     // 转 Rhino XML 对象 —— floaty.window 期望 XML 对象,字符串会 NPE
     var xmlObj = null;
     try { xmlObj = new XML(xml); console.log("[INFO] new XML() 解析成功"); }
