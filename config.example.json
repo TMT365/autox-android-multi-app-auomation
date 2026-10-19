@@ -4,6 +4,7 @@
   "triggerKey": "volume_down",
   "floaterEnabled": true,
   "hotkeyEnabled": true,
+  "autoAnswerChoice": true,
   "homeworkApp": "xuexitong",
   "aiApp": "doubao",
   "apps": {
@@ -144,7 +145,7 @@
       "timeout": 3000,
       "match": [
         {
-          "text": "下一题",
+          "textMatches": "^\\s*下一题\\s*$",
           "className": "android.view.View",
           "clickable": true,
           "visibleToUser": true,
@@ -158,9 +159,31 @@
           "pick": "bottomMost"
         },
         {
-          "textMatches": "^\\s*(下一题|继续|Next)\\s*$",
+          "textMatches": "^\\s*(继续|Next)\\s*$",
           "clickable": true,
           "pick": "bottomMost"
+        }
+      ]
+    },
+    "questionStem": {
+      "timeout": 3000,
+      "match": [
+        {
+          "className": "android.widget.TextView",
+          "visibleToUser": true,
+          "minTextLength": 6,
+          "pick": "longestText"
+        }
+      ]
+    },
+    "option": {
+      "timeout": 3000,
+      "match": [
+        {
+          "textMatches": "^\\s*[ABCD]\\s*$",
+          "className": "android.widget.TextView",
+          "visibleToUser": true,
+          "pick": "first"
         }
       ]
     },
@@ -181,23 +204,6 @@
           "textContains": "请输入",
           "className": "android.widget.EditText",
           "visibleToUser": true
-        }
-      ]
-    },
-    "option": {
-      "timeout": 3000,
-      "match": [
-        {
-          "textMatches": "^\\s*[ABCD][.、．\\s]",
-          "className": "android.widget.TextView",
-          "visibleToUser": true,
-          "pick": "first"
-        },
-        {
-          "textMatches": "^\\s*[ABCD]\\s*$",
-          "className": "android.widget.TextView",
-          "visibleToUser": true,
-          "pick": "first"
         }
       ]
     }

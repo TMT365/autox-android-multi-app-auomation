@@ -7,6 +7,35 @@
 
 ---
 
+## [1.6.1] - 2026-10-19
+
+### 根据真机 dump 校准（学习通 v6.x / WebView）
+
+实测控件树关键发现：
+
+| 控件 | 实际形态 |
+|---|---|
+| 下一题 | `android.view.View`，文字 `"下一题 "`（**带尾随空格**） |
+| 上一题 | `android.view.View`，文字 `" 上一题"`（带前导空格） |
+| 选项 | `android.view.View [clickable]`，子 `TextView` 只有字母 `A/B/C/D`，**选项正文不在无障碍树** |
+| 题干 | `android.widget.TextView`，文本可读 |
+| 选择题页面 | **没有 EditText**，答案只能点选 |
+
+### 修改
+- `nextButton` 首选策略改为 `textMatches("^\\s*下一题\\s*$")`，兼容前后空格
+- 新增 `questionStem` 控件策略：可见 TextView + `minTextLength: 6` + `pick: longestText`
+- `option` 策略改为精确匹配单个字母 `^[ABCD]$`
+- 新增 `pick: "longestText"`、`minTextLength` / `maxTextLength` 过滤
+- **新增选择题自动点选**：
+  - `parseChoiceAnswer()` 解析纯选项答案（`A` / `AB` / `A,B` / `答案：A`）
+  - `findOptionByLetter()` / `applyChoiceAnswer()` 点选对应选项
+  - 选项字母节点不可点时由 `clickNodeSafe()` 向上找 clickable 父 View
+  - 非纯选项答案（简答题）仍走原有粘贴流程
+  - 开关 `config.autoAnswerChoice`（默认 true）
+- `.gitignore` 忽略 `layout_dump.txt`（含题目内容，不应提交）
+
+---
+
 ## [1.6.0] - 2026-10-19
 
 ### 新增

@@ -50,3 +50,5 @@ coverage/
 *.pem
 *.key
 secrets/
+# 手机导出的控件树（含题目内容，勿提交）
+layout_dump.txt

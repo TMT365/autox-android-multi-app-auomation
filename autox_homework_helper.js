@@ -67,7 +67,7 @@
 
 // ==================== 版本 & 全局开关 ====================
 
-var SCRIPT_VERSION = "1.6.0";           // 当前脚本版本
+var SCRIPT_VERSION = "1.6.1";           // 当前脚本版本
 var DEBUG = false;                      // 调试模式：true 时输出详细日志
 var STATS = { runs: 0, success: 0, fail: 0, lastError: "" };  // 运行时统计
 
@@ -114,6 +114,7 @@ var DEFAULT_CONFIG = {
     // 顶层开关
     floaterEnabled: true,
     hotkeyEnabled:  true,
+    autoAnswerChoice: true,                          // 纯选项答案（A/AB）自动点选，关闭则只粘贴
 
     // 选中的 app id（apps 下的键名）
     homeworkApp: "xuexitong",
@@ -202,16 +203,36 @@ var DEFAULT_CONFIG = {
     //   注意：学习通新版按钮是 android.view.View 绘制文字，id/desc 为空，
     //        必须用 text + clickable + visibleToUser 组合定位。
     controls: {
+        // 实测学习通 dump：底部导航文字是 "下一题 "（带尾随空格），
+        // 精确 text("下一题") 必然失配，必须用 textMatches 去空白。
         nextButton: {
             timeout: 3000,
             match: [
-                { text: "下一题", className: "android.view.View",
+                { textMatches: "^\\s*下一题\\s*$", className: "android.view.View",
                   clickable: true, visibleToUser: true,
                   region: "bottom", pick: "bottomMost" },
                 { textContains: "下一题", clickable: true, visibleToUser: true,
                   pick: "bottomMost" },
-                { textMatches: "^\\s*(下一题|继续|Next)\\s*$", clickable: true,
+                { textMatches: "^\\s*(继续|Next)\\s*$", clickable: true,
                   pick: "bottomMost" }
+            ]
+        },
+        // 实测学习通 dump：题干是 TextView，选项正文不在无障碍树里，
+        // 选项子节点只有字母 A/B/C/D。题干取可见 TextView 中文本最长者。
+        questionStem: {
+            timeout: 3000,
+            match: [
+                { className: "android.widget.TextView", visibleToUser: true,
+                  minTextLength: 6, pick: "longestText" }
+            ]
+        },
+        // 选项：子 TextView 只有字母，字母节点通常不可点，
+        // clickNodeSafe 会自动向上找 clickable 的父 View。
+        option: {
+            timeout: 3000,
+            match: [
+                { textMatches: "^\\s*[ABCD]\\s*$", className: "android.widget.TextView",
+                  visibleToUser: true, pick: "first" }
             ]
         },
         answerInput: {
@@ -222,15 +243,6 @@ var DEFAULT_CONFIG = {
                 { id: "editText2", clickable: true },
                 { textContains: "请输入", className: "android.widget.EditText",
                   visibleToUser: true }
-            ]
-        },
-        option: {
-            timeout: 3000,
-            match: [
-                { textMatches: "^\\s*[ABCD][.、．\\s]", className: "android.widget.TextView",
-                  visibleToUser: true, pick: "first" },
-                { textMatches: "^\\s*[ABCD]\\s*$", className: "android.widget.TextView",
-                  visibleToUser: true, pick: "first" }
             ]
         }
     }
@@ -282,6 +294,7 @@ function loadConfig() {
         if (typeof parsed.triggerKey      === "string" && parsed.triggerKey) cfg.triggerKey = parsed.triggerKey;
         if (typeof parsed.floaterEnabled  === "boolean") cfg.floaterEnabled = parsed.floaterEnabled;
         if (typeof parsed.hotkeyEnabled   === "boolean") cfg.hotkeyEnabled  = parsed.hotkeyEnabled;
+        if (typeof parsed.autoAnswerChoice === "boolean") cfg.autoAnswerChoice = parsed.autoAnswerChoice;
         if (typeof parsed.homeworkApp     === "string")  cfg.homeworkApp    = parsed.homeworkApp;
         if (typeof parsed.aiApp           === "string")  cfg.aiApp          = parsed.aiApp;
 
@@ -776,6 +789,16 @@ function tryMatchStrategy(s) {
             if (region === "top" && cy > H * 0.3) continue;
             if (region === "bottomRight" && (cy < H * 0.6 || cx < W * 0.5)) continue;
             if (region === "center" && (cy < H * 0.25 || cy > H * 0.75)) continue;
+
+            // v1.6.1: 文本长度过滤（用于跳过空 TextView / 选项字母）
+            if (typeof s.minTextLength === "number") {
+                var nt = safeCall(n, "text");
+                if (!nt || nt.length < s.minTextLength) continue;
+            }
+            if (typeof s.maxTextLength === "number") {
+                var xt = safeCall(n, "text");
+                if (xt && xt.length > s.maxTextLength) continue;
+            }
             filtered.push(n);
         }
         if (!filtered.length) return null;
@@ -783,13 +806,15 @@ function tryMatchStrategy(s) {
         // ---- 3) 多候选裁决 ----
         var pick = s.pick || "first";
         var best = filtered[0];
-        if (pick === "bottomMost" || pick === "rightMost" || pick === "largest") {
+        if (pick === "bottomMost" || pick === "rightMost" ||
+            pick === "largest" || pick === "longestText") {
             var bestScore = -1;
             for (var j = 0; j < filtered.length; j++) {
                 var bb = filtered[j].bounds();
                 var score;
                 if (pick === "bottomMost") score = bb.centerY();
                 else if (pick === "rightMost") score = bb.centerX();
+                else if (pick === "longestText") score = safeCall(filtered[j], "text").length;
                 else score = bb.width() * bb.height();
                 if (score > bestScore) { bestScore = score; best = filtered[j]; }
             }
@@ -829,6 +854,72 @@ function clickNodeSafe(node) {
 /** 安全调用 UiObject 的取值方法，异常返回空串 */
 function safeCall(node, method) {
     try { return node[method] ? String(node[method]()) : ""; } catch (e) { return ""; }
+}
+
+/* ====================================================================
+ *  v1.6.1 选择题支持：解析纯选项答案并点选
+ *  实测学习通：选项是 clickable 的 android.view.View，
+ *  子 TextView 只有字母 A/B/C/D，正文不在无障碍树里。
+ * ================================================================== */
+
+/**
+ * 判断 AI 返回是否为可点选的纯选项答案（A / AB / A,B / 答案：A）
+ * @returns {?string} 归一化字母串（如 "AB"）；不是纯选项返回 null
+ */
+function parseChoiceAnswer(text) {
+    if (!text) return null;
+    var s = String(text).trim();
+    if (!s) return null;
+    // 只取第一行，避免把解析/解释里的字母算进去
+    if (s.indexOf("\n") >= 0) s = s.split("\n")[0].trim();
+    s = s.replace(/^答案\s*[:：]?\s*/, "").replace(/^选\s*[:：]?\s*/, "");
+    var compact = s.replace(/[\s,，、;；/|和及与.．。]/g, "").toUpperCase();
+    if (!/^[ABCD]{1,4}$/.test(compact)) return null;
+    // 去重并保持顺序
+    var out = "";
+    for (var i = 0; i < compact.length; i++) {
+        var ch = compact.charAt(i);
+        if (out.indexOf(ch) < 0) out += ch;
+    }
+    return out;
+}
+
+/** 查找选项字母对应的节点（A/B/C/D） */
+function findOptionByLetter(letter) {
+    return findControl({
+        timeout: 2000,
+        match: [
+            { text: letter, className: "android.widget.TextView",
+              visibleToUser: true, pick: "first" },
+            { textMatches: "^\\s*" + letter + "\\s*$", className: "android.widget.TextView",
+              visibleToUser: true, pick: "first" }
+        ]
+    });
+}
+
+/**
+ * 依次点选选项
+ * @returns {string[]} 成功点选的字母列表
+ */
+function applyChoiceAnswer(letters) {
+    var clicked = [];
+    for (var i = 0; i < letters.length; i++) {
+        var letter = letters.charAt(i);
+        var node = findOptionByLetter(letter);
+        if (!node) {
+            log("WARN", "未找到选项 " + letter);
+            continue;
+        }
+        // 字母 TextView 通常不可点，clickNodeSafe 会向上找 clickable 父 View
+        if (clickNodeSafe(node)) {
+            clicked.push(letter);
+            log("INFO", "已点选选项 " + letter);
+            sleep(config.delays.afterClick || 500);
+        } else {
+            log("WARN", "点选选项 " + letter + " 失败");
+        }
+    }
+    return clicked;
 }
 
 /**
@@ -1226,7 +1317,20 @@ function processOneQuestion() {
         return false;
     }
 
-    // 8) 长按输入框 → 粘贴
+    // 8) 选择题：纯选项答案（A/AB）→ 直接点选
+    var choice = config.autoAnswerChoice ? parseChoiceAnswer(answer) : null;
+    if (choice) {
+        showToast("识别为选择题答案：" + choice + "，正在点选…");
+        var clicked = applyChoiceAnswer(choice);
+        if (clicked.length > 0) {
+            STATS.success += 1;
+            log("INFO", "===== 第 " + STATS.runs + "题完成（点选 " + clicked.join("") + "） =====");
+            return true;
+        }
+        log("WARN", "未找到可点选的选项，回退到粘贴模式");
+    }
+
+    // 9) 非选择题：长按输入框 → 粘贴
     showToast("正在粘贴答案…");
     var hwSel = config.apps[config.homeworkApp].selectors;
     var hwCo  = config.coords[config.homeworkApp];
@@ -1273,8 +1377,8 @@ function onTriggerNextQuestion() {
             var ok = processOneQuestion();
             if (ok) {
                 showToast(
-                    "本题已完成 ✓\n答案已粘贴到输入框。\n" +
-                    "请检查无误后，按 " + config.triggerKey + " 进入下一题",
+                    "本题已完成 ✓\n" +
+                    "请检查无误后，按 " + config.triggerKey + " 继续",
                     "long"
                 );
             } else {
