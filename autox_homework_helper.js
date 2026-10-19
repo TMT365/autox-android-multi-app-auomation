@@ -281,7 +281,7 @@ function loadConfig() {
         log("WARN", "config 字段合并异常: " + (e.message || e));
         return DEFAULT_CONFIG;
     }
-    log("INFO", "已加载外部配置: " + jsonPath);
+    log("INFO", "已加载外部配置: " + CONFIG_JSON_PATH);
     return cfg;
 }
 
