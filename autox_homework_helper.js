@@ -28,6 +28,15 @@
  *    · 旧的 PACKAGE/TIMEOUT/DELAY/SELECTOR/COORD/NEXT_QUESTION_KEY/ENABLE_FLOATER/
  *      ENABLE_HOTKEY/FLOATER_XML_PATH 全部下沉为 DEFAULT_*（仅作回退数据源，不再被运行时引用）
  *
+ *  【v1.7 新增】
+ *    · 识别与定位分离：config 语义策略识别控件，page_cache.json 保存坐标
+ *    · scanPage() 扫描当前页并覆盖 page_cache.json（学习通 + 豆包）
+ *    · 悬浮窗新增 ⟳ 按钮：随时重新识别当前页面控件（网络波动后恢复）
+ *    · 题干指纹变化自动重扫；点下一题后立即重扫
+ *    · 豆包扫描角色：inputBox / attachBtn / albumOption / photoConfirm / sendBtn
+ *    · 选择题点选优先使用缓存坐标，缺失时回退实时定位
+ *    · ensureScreenCapture()：启动时申请屏幕截图权限
+ *
  *  【v1.6 新增】
  *    · 通用控件查找 findControl()/tryMatchStrategy()：多策略 + 相对区域过滤 + 裁决
  *    · 安全点击 clickNodeSafe()：自身可点 -> 可点击祖先 -> 实时 bounds 中心
@@ -67,7 +76,7 @@
 
 // ==================== 版本 & 全局开关 ====================
 
-var SCRIPT_VERSION = "1.6.1";           // 当前脚本版本
+var SCRIPT_VERSION = "1.7.0";           // 当前脚本版本
 var DEBUG = false;                      // 调试模式：true 时输出详细日志
 var STATS = { runs: 0, success: 0, fail: 0, lastError: "" };  // 运行时统计
 
@@ -80,6 +89,8 @@ var SCRIPT_DIR = (function () {
 })();
 var FLOATER_XML_PATH = files.join(SCRIPT_DIR, "floater.xml");   // 悬浮窗布局（与脚本同目录）
 var CONFIG_JSON_PATH = files.join(SCRIPT_DIR, "config.json");   // 用户配置文件（与脚本同目录）
+var PAGE_CACHE_PATH = files.join(SCRIPT_DIR, "page_cache.json"); // v1.7 页面控件坐标缓存（每次扫描覆盖）
+var pageCache = null;                                            // 内存中的当前页缓存
 var STATE = {
     current:      "空闲",
     lastDuration: 0,
@@ -245,6 +256,51 @@ var DEFAULT_CONFIG = {
                   visibleToUser: true }
             ]
         }
+    },
+
+    // AI APP 的扫描角色（v1.7）—— 同样支持被 config.json 覆盖
+    aiControls: {
+        inputBox: {
+            timeout: 2000,
+            match: [
+                { className: "android.widget.EditText", visibleToUser: true,
+                  enabled: true, pick: "largest" },
+                { textContains: "输入消息", visibleToUser: true, pick: "first" },
+                { textContains: "发消息", visibleToUser: true, pick: "first" }
+            ]
+        },
+        attachBtn: {
+            timeout: 2000,
+            match: [
+                { desc: "更多功能", clickable: true, visibleToUser: true, pick: "first" },
+                { descContains: "附件", clickable: true, visibleToUser: true, pick: "first" },
+                { text: "+", clickable: true, visibleToUser: true, pick: "first" }
+            ]
+        },
+        albumOption: {
+            timeout: 2000,
+            match: [
+                { text: "相册", clickable: true, visibleToUser: true, pick: "first" },
+                { descContains: "相册", clickable: true, visibleToUser: true, pick: "first" },
+                { text: "图片", clickable: true, visibleToUser: true, pick: "first" }
+            ]
+        },
+        photoConfirm: {
+            timeout: 2000,
+            match: [
+                { text: "完成", clickable: true, visibleToUser: true, pick: "first" },
+                { text: "确定", clickable: true, visibleToUser: true, pick: "first" },
+                { descContains: "完成", visibleToUser: true, pick: "first" }
+            ]
+        },
+        sendBtn: {
+            timeout: 2000,
+            match: [
+                { desc: "发送", clickable: true, visibleToUser: true, pick: "first" },
+                { text: "发送", clickable: true, visibleToUser: true, pick: "first" },
+                { id: "send_btn", clickable: true, pick: "first" }
+            ]
+        }
     }
 };
 
@@ -349,6 +405,15 @@ function loadConfig() {
                 if (!pc || typeof pc !== "object") continue;
                 if (typeof pc.timeout === "number" && pc.timeout > 0) cfg.controls[ctr].timeout = pc.timeout;
                 if (Array.isArray(pc.match)) cfg.controls[ctr].match = pc.match;
+            }
+        }
+        if (parsed.aiControls && typeof parsed.aiControls === "object") {
+            for (var actr in cfg.aiControls) {
+                if (!cfg.aiControls.hasOwnProperty(actr)) continue;
+                var apc = parsed.aiControls[actr];
+                if (!apc || typeof apc !== "object") continue;
+                if (typeof apc.timeout === "number" && apc.timeout > 0) cfg.aiControls[actr].timeout = apc.timeout;
+                if (Array.isArray(apc.match)) cfg.aiControls[actr].match = apc.match;
             }
         }
     } catch (e) {
@@ -532,7 +597,7 @@ function initFloater() {
         return;
     }
     var ids = ["title_bar","title_text","state_text","stats_text","duration_text",
-               "btn_min","btn_next","btn_pause","btn_stop","btn_clipboard","btn_log","error_text"];
+               "btn_scan","btn_min","btn_next","btn_pause","btn_stop","btn_clipboard","btn_log","error_text"];
     for (var i = 0; i < ids.length; i++) {
         var v = null;
         try { v = floater.findView(ids[i]); } catch (e) {}
@@ -566,6 +631,40 @@ function initFloater() {
             return false;
         });
     } catch (e) { log("WARN", "setOnTouchListener 失败: " + (e.message || e)); }
+    if (views.btn_scan) views.btn_scan.on("click", function () {
+        // v1.7: 重新识别当前页面控件布局（网络波动 / 页面变化后可手动恢复）
+        log("INFO", "[floater] 重新扫描页面控件");
+        threads.start(function () {
+            try {
+                var pkg = "";
+                try { pkg = currentPackage(); } catch (e) {}
+                var appId = null;
+                if (pkg === config.apps[config.homeworkApp].package) appId = config.homeworkApp;
+                else if (pkg === config.apps[config.aiApp].package) appId = config.aiApp;
+
+                if (!appId) {
+                    showToast("当前页面不是目标 APP\n请切到学习通/豆包后再扫描", "long");
+                    return;
+                }
+                STATE.current = "扫描中…";
+                updateFloaterUi();
+
+                var res = scanPage(appId);
+                if (res) {
+                    STATE.current = "已识别 " + res.count + " 项";
+                    showToast("已重新识别 " + res.count + " 个控件");
+                } else {
+                    STATE.current = "扫描失败";
+                    showToast("扫描失败，请查看日志", "long");
+                }
+            } catch (e) {
+                STATE.current = "扫描异常";
+                showToast("扫描异常：" + (e.message || e), "long");
+                log("ERROR", "扫描异常: " + (e.message || e));
+            }
+            updateFloaterUi();
+        });
+    });
     if (views.btn_min) views.btn_min.on("click", function () {
         STATE.minimized = !STATE.minimized;
         log("INFO", "[floater] " + (STATE.minimized ? "已最小化" : "已恢复"));
@@ -754,7 +853,17 @@ function findControl(spec, timeoutMs) {
  * 执行单条匹配策略：构建选择器 -> find() -> 区域过滤 -> 裁决
  */
 function tryMatchStrategy(s) {
-    if (!s) return null;
+    var filtered = tryMatchStrategyAll(s);
+    if (!filtered.length) return null;
+    return pickCandidate(filtered, s.pick || "first");
+}
+
+/**
+ * 执行单条策略并返回全部候选（用于扫描 A/B/C/D 等同类控件）
+ * @returns {Array} 通过过滤与区域限制的 UiObject 列表
+ */
+function tryMatchStrategyAll(s) {
+    if (!s) return [];
     try {
         // ---- 1) 组合选择器（所有条件 AND）----
         var sel = null;
@@ -767,10 +876,10 @@ function tryMatchStrategy(s) {
         if (typeof s.clickable === "boolean")    sel = sel ? sel.clickable(s.clickable) : clickable(s.clickable);
         if (typeof s.visibleToUser === "boolean") sel = sel ? sel.visibleToUser(s.visibleToUser) : visibleToUser(s.visibleToUser);
         if (typeof s.enabled === "boolean")      sel = sel ? sel.enabled(s.enabled) : enabled(s.enabled);
-        if (!sel) return null;
+        if (!sel) return [];
 
         var nodes = sel.find();
-        if (!nodes || !nodes.length) return null;
+        if (!nodes || !nodes.length) return [];
 
         // ---- 2) 相对区域过滤（用屏幕比例，不用绝对坐标）----
         var W = device.width, H = device.height;
@@ -790,7 +899,7 @@ function tryMatchStrategy(s) {
             if (region === "bottomRight" && (cy < H * 0.6 || cx < W * 0.5)) continue;
             if (region === "center" && (cy < H * 0.25 || cy > H * 0.75)) continue;
 
-            // v1.6.1: 文本长度过滤（用于跳过空 TextView / 选项字母）
+            // 文本长度过滤（用于跳过空 TextView / 选项字母）
             if (typeof s.minTextLength === "number") {
                 var nt = safeCall(n, "text");
                 if (!nt || nt.length < s.minTextLength) continue;
@@ -801,28 +910,30 @@ function tryMatchStrategy(s) {
             }
             filtered.push(n);
         }
-        if (!filtered.length) return null;
-
-        // ---- 3) 多候选裁决 ----
-        var pick = s.pick || "first";
-        var best = filtered[0];
-        if (pick === "bottomMost" || pick === "rightMost" ||
-            pick === "largest" || pick === "longestText") {
-            var bestScore = -1;
-            for (var j = 0; j < filtered.length; j++) {
-                var bb = filtered[j].bounds();
-                var score;
-                if (pick === "bottomMost") score = bb.centerY();
-                else if (pick === "rightMost") score = bb.centerX();
-                else if (pick === "longestText") score = safeCall(filtered[j], "text").length;
-                else score = bb.width() * bb.height();
-                if (score > bestScore) { bestScore = score; best = filtered[j]; }
-            }
-        }
-        return best;
+        return filtered;
     } catch (e) {
-        return null;
+        return [];
     }
+}
+
+/** 从候选列表中按规则裁决 */
+function pickCandidate(filtered, pick) {
+    if (!filtered || !filtered.length) return null;
+    var best = filtered[0];
+    if (pick === "bottomMost" || pick === "rightMost" ||
+        pick === "largest" || pick === "longestText") {
+        var bestScore = -1;
+        for (var j = 0; j < filtered.length; j++) {
+            var bb = filtered[j].bounds();
+            var score;
+            if (pick === "bottomMost") score = bb.centerY();
+            else if (pick === "rightMost") score = bb.centerX();
+            else if (pick === "longestText") score = safeCall(filtered[j], "text").length;
+            else score = bb.width() * bb.height();
+            if (score > bestScore) { bestScore = score; best = filtered[j]; }
+        }
+    }
+    return best;
 }
 
 /**
@@ -905,6 +1016,18 @@ function applyChoiceAnswer(letters) {
     var clicked = [];
     for (var i = 0; i < letters.length; i++) {
         var letter = letters.charAt(i);
+
+        // 1) 优先使用本页扫描缓存坐标（识别与定位分离）
+        var cached = getCachedOption(letter);
+        if (cached) {
+            click(cached.x, cached.y);
+            clicked.push(letter);
+            log("INFO", "已点选选项 " + letter + "（缓存坐标 " + cached.x + "," + cached.y + "）");
+            sleep(config.delays.afterClick || 500);
+            continue;
+        }
+
+        // 2) 缓存缺失 -> 实时查找
         var node = findOptionByLetter(letter);
         if (!node) {
             log("WARN", "未找到选项 " + letter);
@@ -913,13 +1036,216 @@ function applyChoiceAnswer(letters) {
         // 字母 TextView 通常不可点，clickNodeSafe 会向上找 clickable 父 View
         if (clickNodeSafe(node)) {
             clicked.push(letter);
-            log("INFO", "已点选选项 " + letter);
+            log("INFO", "已点选选项 " + letter + "（实时定位）");
             sleep(config.delays.afterClick || 500);
         } else {
             log("WARN", "点选选项 " + letter + " 失败");
         }
     }
     return clicked;
+}
+
+/* ====================================================================
+ *  v1.7 页面控件扫描与坐标缓存
+ *
+ *  架构：
+ *    config.controls / config.aiControls   —— 语义层：识别“是什么控件”
+ *    page_cache.json                       —— 坐标层：记录“它在哪”
+ *
+ *  页面变化（点下一题 / 切 APP / 网络恢复）后重新扫描并覆盖缓存。
+ *  即使学习通改版，也只需改 config 里的匹配策略，无需改代码。
+ * ================================================================== */
+
+/** UiObject -> 可序列化缓存条目 */
+function nodeToEntry(node) {
+    if (!node) return { found: false };
+    var b = null;
+    try { b = node.bounds(); } catch (e) {}
+    if (!b || b.width() <= 0) return { found: false };
+    return {
+        found: true,
+        text: safeCall(node, "text"),
+        className: safeCall(node, "className"),
+        bounds: [b.left, b.top, b.right, b.bottom],
+        x: b.centerX(),
+        y: b.centerY()
+    };
+}
+
+/** 返回某策略的全部候选（用于 A/B/C/D 等同类控件） */
+function findAllControl(spec) {
+    if (!spec || !spec.match) return [];
+    for (var i = 0; i < spec.match.length; i++) {
+        var arr = tryMatchStrategyAll(spec.match[i]);
+        if (arr && arr.length) return arr;
+    }
+    return [];
+}
+
+/**
+ * 扫描当前页面，写入 page_cache.json（覆盖旧文件）
+ * @param {string} appId homeworkApp 或 aiApp
+ * @returns {?Object} 缓存对象
+ */
+function scanPage(appId, merge) {
+    var isAi = appId === config.aiApp;
+    var specSet = isAi ? config.aiControls : config.controls;
+    if (!specSet) { log("WARN", "无扫描配置: " + appId); return null; }
+
+    // merge=true：在现有可用缓存上增量更新（用于展开菜单等瞬态页面）
+    var controls = {};
+    if (merge && isCacheUsable(appId)) {
+        for (var bk in pageCache.controls) {
+            if (pageCache.controls.hasOwnProperty(bk)) controls[bk] = pageCache.controls[bk];
+        }
+    }
+
+    var deadline = Date.now() + 8000;   // 总预算 8s，避免空等
+
+    for (var role in specSet) {
+        if (!specSet.hasOwnProperty(role)) continue;
+        if (role === "option") continue;             // 选项单独收集
+        if (Date.now() > deadline) break;
+        var node = findControl(specSet[role], 800);
+        var entry = nodeToEntry(node);
+        // merge 模式下"没找到"不覆盖旧值
+        if (entry.found || !merge || !controls[role]) controls[role] = entry;
+    }
+
+    // 选项 A/B/C/D 分别落库
+    if (specSet.option) {
+        var opts = findAllControl(specSet.option);
+        var options = (merge && controls.options) ? controls.options : {};
+        for (var i = 0; i < opts.length; i++) {
+            var letter = safeCall(opts[i], "text").replace(/\s/g, "").toUpperCase();
+            if (/^[ABCD]$/.test(letter)) {
+                options[letter] = nodeToEntry(opts[i]);
+            }
+        }
+        controls.options = options;
+    }
+
+    // 统计实际找到的角色数
+    var count = 0;
+    for (var r in controls) {
+        if (!controls.hasOwnProperty(r)) continue;
+        if (r === "options") {
+            for (var l in controls.options) {
+                if (controls.options.hasOwnProperty(l) && controls.options[l].found) count++;
+            }
+        } else if (controls[r] && controls[r].found) {
+            count++;
+        }
+    }
+
+    var pkg = "";
+    try { pkg = currentPackage(); } catch (e) {}
+
+    // 学习通页面用题干文字做“页面指纹”，判断缓存是否过期
+    var stemText = "";
+    if (!isAi && controls.questionStem && controls.questionStem.found) {
+        stemText = controls.questionStem.text || "";
+    }
+
+    var cache = {
+        version: 1,
+        ts: Date.now(),
+        app: appId,
+        package: pkg,
+        stemText: stemText,
+        screen: { w: device.width, h: device.height },
+        controls: controls,
+        count: count
+    };
+
+    pageCache = cache;
+    try {
+        files.write(PAGE_CACHE_PATH, JSON.stringify(cache, null, 2));
+        log("INFO", "已扫描 " + count + " 个控件 -> " + PAGE_CACHE_PATH +
+            (merge ? "（增量合并）" : ""));
+    } catch (e) {
+        log("WARN", "写页面缓存失败: " + (e.message || e));
+    }
+    return cache;
+}
+
+/** 缓存是否属于当前 APP + 当前屏幕尺寸 */
+function isCacheUsable(appId) {
+    if (!pageCache || !pageCache.controls) return false;
+    if (appId && pageCache.app !== appId) return false;
+    if (!pageCache.screen || pageCache.screen.w !== device.width ||
+        pageCache.screen.h !== device.height) return false;
+    try {
+        var pkg = currentPackage();
+        if (pageCache.package && pkg && pkg !== pageCache.package) return false;
+    } catch (e) {}
+    return true;
+}
+
+function getCachedControl(role) {
+    if (!isCacheUsable()) return null;
+    var c = pageCache.controls[role];
+    return (c && c.found) ? c : null;
+}
+
+function getCachedOption(letter) {
+    if (!isCacheUsable()) return null;
+    var opts = pageCache.controls.options;
+    if (!opts) return null;
+    var c = opts[letter];
+    return (c && c.found) ? c : null;
+}
+
+/** 主动让缓存失效（点下一题 / 切页 / 网络恢复后） */
+function invalidatePageCache(reason) {
+    pageCache = null;
+    log("INFO", "页面缓存已失效: " + (reason || ""));
+}
+
+/** 优先用缓存坐标点击角色；无缓存返回 false */
+function clickRoleCached(role) {
+    var c = getCachedControl(role);
+    if (!c) return false;
+    click(c.x, c.y);
+    logDebug("[cache] 点击 " + role + " @(" + c.x + "," + c.y + ")");
+    return true;
+}
+
+/** 缓存优先 -> 实时控件 -> 坐标兜底 */
+function clickRoleOrFallback(role, ids, descs, texts, coord, label) {
+    if (clickRoleCached(role)) return true;
+    return clickSmart(ids, descs, texts, coord, label);
+}
+
+/**
+ * 确保当前页有可用缓存：
+ *   学习通：题干变化 -> 重扫；豆包：APP 变化 -> 重扫
+ */
+function ensurePageScanned(appId) {
+    if (appId === config.homeworkApp) {
+        var stem = findControl(config.controls.questionStem, 400);
+        var stemText = stem ? safeCall(stem, "text") : "";
+        // 题干指纹为空时不可信，强制重扫
+        if (stemText && isCacheUsable(appId) && pageCache.stemText === stemText) return pageCache;
+        log("INFO", "检测到页面变化（题干指纹不同），重新扫描");
+        return scanPage(appId);
+    }
+    if (isCacheUsable(appId)) return pageCache;
+    return scanPage(appId);
+}
+
+/** 点击"下一题"并立刻重扫新页面 */
+function clickNextQuestionAndRescan() {
+    var node = findControl(config.controls.nextButton, 2000);
+    var ok = false;
+    if (node) ok = clickNodeSafe(node);
+    else ok = clickRoleCached("nextButton");
+    if (!ok) { log("WARN", "未找到下一题按钮"); return false; }
+
+    invalidatePageCache("点击下一题");
+    sleep(config.delays.afterLaunch);
+    scanPage(config.homeworkApp);
+    return true;
 }
 
 /**
@@ -982,11 +1308,60 @@ function launchAndWait(pkg, label) {
 }
 
 /**
+ * 申请/确认屏幕截图权限（v1.7）
+ * AutoX 的 captureScreen() 依赖 MediaProjection 权限：
+ *   · 首次运行会弹系统对话框，需要用户点"立即开始"
+ *   · Android 14+ 每次新的截图会话都可能需要重新确认
+ * @returns {boolean} 权限是否可用
+ */
+function ensureScreenCapture() {
+    // 1) 先探测当前是否已可用
+    try {
+        var img = captureScreen();
+        if (img) {
+            try { if (img.recycle) img.recycle(); } catch (e) {}
+            return true;
+        }
+    } catch (e) {}
+
+    // 2) 请求权限（会弹系统对话框）
+    try {
+        if (typeof requestScreenCapture === "function") {
+            log("INFO", "请求屏幕截图权限…");
+            requestScreenCapture(false);
+            sleep(1200);
+            var img2 = captureScreen();
+            if (img2) {
+                try { if (img2.recycle) img2.recycle(); } catch (e) {}
+                return true;
+            }
+        }
+    } catch (e) {
+        log("WARN", "requestScreenCapture 失败: " + (e.message || e));
+    }
+
+    // 3) 兼容 images.requestScreenCapture
+    try {
+        if (typeof images !== "undefined" && images.requestScreenCapture) {
+            images.requestScreenCapture(false);
+            sleep(1200);
+            var img3 = captureScreen();
+            if (img3) {
+                try { if (img3.recycle) img3.recycle(); } catch (e) {}
+                return true;
+            }
+        }
+    } catch (e2) {}
+    return false;
+}
+
+/**
  * 截图并保存到本地（先删除旧文件，避免豆包收到历史缓存）
  * @returns {string|null}  截图路径；失败返回 null
  */
 function takeScreenshot(path) {
     try { if (files.exists(path)) files.remove(path); } catch (e) {}
+    var permTried = false;
     var t0 = Date.now();
     while (Date.now() - t0 < config.timeouts.screenshot) {
         try {
@@ -996,6 +1371,11 @@ function takeScreenshot(path) {
                 if (files.exists(path) && files.size(path) > 1024) return path;
             }
         } catch (e1) {
+            // 权限可能未授权：只尝试请求一次，避免反复弹窗
+            if (!permTried) {
+                permTried = true;
+                ensureScreenCapture();
+            }
             // 方案 B：拿到 Image 对象再保存
             try {
                 var img = captureScreen();
@@ -1097,8 +1477,9 @@ function doubaoUploadAndAsk() {
         }
     }
 
-    // A1. 点击附件"+"按钮
-    if (!clickSmart(
+    // A1. 点击附件"+"按钮（扫描缓存优先）
+    if (!clickRoleOrFallback(
+            "attachBtn",
             aiSel.attachBtnId,
             aiSel.attachBtnDesc,
             null,
@@ -1107,8 +1488,13 @@ function doubaoUploadAndAsk() {
     )) return false;
     sleep(config.delays.afterClick * 2);
 
-    // A2. 在弹出的菜单中点击"相册/图片"
-    if (!clickSmart(
+    // A1.5 附件菜单已展开：增量扫描，记录"相册"选项坐标（不覆盖主控件）
+    try { scanPage(config.aiApp, true); }
+    catch (e) { log("WARN", "附件菜单扫描失败: " + (e.message || e)); }
+
+    // A2. 在弹出的菜单中点击"相册/图片"（扫描缓存优先）
+    if (!clickRoleOrFallback(
+            "albumOption",
             null,
             aiSel.albumDesc,
             aiSel.albumText,
@@ -1133,7 +1519,8 @@ function doubaoUploadAndAsk() {
     sleep(config.delays.afterClick * 2);
 
     // A4. 确认选择（点击"完成"或"发送"）
-    var confirmClicked = clickSmart(
+    var confirmClicked = clickRoleOrFallback(
+        "photoConfirm",
         null,
         ["完成", "确定", "发送"],
         ["完成", "确定"],
@@ -1166,8 +1553,9 @@ function doubaoUploadAndAsk() {
     }
     sleep(config.delays.afterInput);
 
-    // A7. 发送
-    if (!clickSmart(
+    // A7. 发送（扫描缓存优先）
+    if (!clickRoleOrFallback(
+            "sendBtn",
             aiSel.sendBtnId,
             aiSel.sendBtnDesc,
             null,
@@ -1287,6 +1675,9 @@ function processOneQuestion() {
         STATS.fail += 1; STATS.lastError = "切" + aiLabel + "失败";
         return false;
     }
+    // 3.5) 扫描 AI 页面控件坐标（输入框 / 附件 / 相册 / 发送）
+    try { scanPage(config.aiApp); }
+    catch (e) { log("WARN", "AI 页面扫描失败: " + (e.message || e)); }
 
     // 4) 上传图片 + 发送提问
     showToast("正在上传图片并提问…");
@@ -1316,6 +1707,10 @@ function processOneQuestion() {
         STATS.fail += 1; STATS.lastError = "返回" + hwLabel + "失败";
         return false;
     }
+
+    // 7.5) 重新扫描作业页面：每一页选项 y 坐标都不同，必须覆盖旧缓存
+    try { ensurePageScanned(config.homeworkApp); }
+    catch (e) { log("WARN", "作业页面扫描失败: " + (e.message || e)); }
 
     // 8) 选择题：纯选项答案（A/AB）→ 直接点选
     var choice = config.autoAnswerChoice ? parseChoiceAnswer(answer) : null;
@@ -1409,6 +1804,13 @@ function main() {
     if (!preflightCheck()) {
         log("ERROR", "预检未通过，脚本退出");
         exit();
+    }
+
+    // 1.5) v1.7: 申请屏幕截图权限（首次会弹系统对话框）
+    if (!ensureScreenCapture()) {
+        log("WARN", "截图权限未就绪：截图步骤可能失败（请在系统弹窗中允许屏幕录制）");
+    } else {
+        log("INFO", "✓ 屏幕截图权限已就绪");
     }
 
     // 2) 打印使用说明与风险提示到 AutoX 控制台

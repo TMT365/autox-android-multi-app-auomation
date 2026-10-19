@@ -18,6 +18,10 @@
                   textSize="13sp"
                   gravity="center_vertical"
                   paddingLeft="8dp"/>
+            <button id="btn_scan" w="34dp" h="22dp"
+                    text="⟳"
+                    textSize="15sp" textColor="#FF8BC34A"
+                    bg="#FF424242" marginRight="2dp"/>
             <button id="btn_min" w="32dp" h="22dp"
                     text="−"
                     textSize="16sp" textColor="#FFE6E6E6"

@@ -207,5 +207,118 @@
         }
       ]
     }
+  },
+  "aiControls": {
+    "inputBox": {
+      "timeout": 2000,
+      "match": [
+        {
+          "className": "android.widget.EditText",
+          "visibleToUser": true,
+          "enabled": true,
+          "pick": "largest"
+        },
+        {
+          "textContains": "输入消息",
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "textContains": "发消息",
+          "visibleToUser": true,
+          "pick": "first"
+        }
+      ]
+    },
+    "attachBtn": {
+      "timeout": 2000,
+      "match": [
+        {
+          "desc": "更多功能",
+          "clickable": true,
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "descContains": "附件",
+          "clickable": true,
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "text": "+",
+          "clickable": true,
+          "visibleToUser": true,
+          "pick": "first"
+        }
+      ]
+    },
+    "albumOption": {
+      "timeout": 2000,
+      "match": [
+        {
+          "text": "相册",
+          "clickable": true,
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "descContains": "相册",
+          "clickable": true,
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "text": "图片",
+          "clickable": true,
+          "visibleToUser": true,
+          "pick": "first"
+        }
+      ]
+    },
+    "photoConfirm": {
+      "timeout": 2000,
+      "match": [
+        {
+          "text": "完成",
+          "clickable": true,
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "text": "确定",
+          "clickable": true,
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "descContains": "完成",
+          "visibleToUser": true,
+          "pick": "first"
+        }
+      ]
+    },
+    "sendBtn": {
+      "timeout": 2000,
+      "match": [
+        {
+          "desc": "发送",
+          "clickable": true,
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "text": "发送",
+          "clickable": true,
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "id": "send_btn",
+          "clickable": true,
+          "pick": "first"
+        }
+      ]
+    }
   }
 }

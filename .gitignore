@@ -52,3 +52,6 @@ coverage/
 secrets/
 # 手机导出的控件树（含题目内容，勿提交）
 layout_dump.txt
+
+# 页面控件坐标缓存（运行时生成）
+page_cache.json

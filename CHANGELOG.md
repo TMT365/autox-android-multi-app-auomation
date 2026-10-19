@@ -7,6 +7,43 @@
 
 ---
 
+## [1.7.0] - 2026-10-19
+
+### 新架构：识别与定位分离
+
+```
+config.controls / config.aiControls   ← 语义层：这条策略识别“是什么控件”
+            ↓ 扫描
+page_cache.json                       ← 坐标层：记录 bounds 中心点 (x, y)
+            ↓ 点击
+click(x, y)                           ← 不再依赖每次实时查找
+```
+
+### 新增
+- `scanPage(appId, merge)`：扫描当前页面全部角色，覆盖写入
+  `page_cache.json`；`merge=true` 时增量更新（用于展开的菜单等瞬态页面）
+- `ensurePageScanned(appId)`：用**题干文字指纹**判断页面是否变化，
+  变化则自动重扫（覆盖上一题坐标）
+- `clickNextQuestionAndRescan()`：点"下一题"后立即失效缓存并重扫
+- `clickRoleCached()` / `clickRoleOrFallback()`：缓存坐标优先，失败回退实时查找
+- **悬浮窗新增 `⟳` 按钮**：随时重新识别当前页面控件，
+  网络波动 / 页面错乱后可一键恢复
+- `config.aiControls`：豆包扫描角色 `inputBox` / `attachBtn` /
+  `albumOption` / `photoConfirm` / `sendBtn`
+- 选择题点选优先使用缓存坐标（`getCachedOption`），缺失时回退实时定位
+- 打开豆包附件菜单后增量扫描，记录"相册"选项坐标
+- `ensureScreenCapture()`：启动时申请屏幕截图权限（MediaProjection），
+  截图失败时自动尝试请求一次
+- `page_cache.json` 含每页控件坐标，加入 `.gitignore`
+
+### 使用说明
+- 每次执行单题流程前，脚本自动扫描当前作业页并覆盖 `page_cache.json`
+- 手动翻页 / 网络波动后，点悬浮窗 `⟳` 重新识别即可
+- 学习通改版时，只需修改 `config.json` 里的 `controls` 匹配策略，
+  无需改动代码
+
+---
+
 ## [1.6.1] - 2026-10-19
 
 ### 根据真机 dump 校准（学习通 v6.x / WebView）
