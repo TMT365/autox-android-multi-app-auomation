@@ -60,7 +60,7 @@
 
 // ==================== 版本 & 全局开关 ====================
 
-var SCRIPT_VERSION = "1.4.0";           // 当前脚本版本
+var SCRIPT_VERSION = "1.5.0";           // 当前脚本版本
 var DEBUG = false;                      // 调试模式：true 时输出详细日志
 var STATS = { runs: 0, success: 0, fail: 0, lastError: "" };  // 运行时统计
 
@@ -77,7 +77,8 @@ var STATE = {
     current:      "空闲",
     lastDuration: 0,
     paused:       false,
-    minimized:    false                          // 悬浮窗是否最小化（仅显示标题栏 + 移动按钮）
+    minimized:    false,                         // 悬浮窗是否最小化（仅显示标题栏 + 移动按钮）
+    ready:        false                          // 是否已点过 START:false = 待启动, true = 进入答题循环
     // 注意：错误信息统一从 STATS.lastError 读取，processOneQuestion 各失败分支
     // 直接写 STATS.lastError 即可，updateFloaterUi 会自动同步到悬浮窗。
 };
@@ -498,7 +499,18 @@ function initFloater() {
         log("INFO", "[floater] " + (STATE.minimized ? "已最小化" : "已恢复"));
         updateFloaterUi();
     });
-    if (views.btn_next) views.btn_next.on("click", function () { log("INFO","[floater] 下一题按钮"); onTriggerNextQuestion(); });
+    if (views.btn_next) views.btn_next.on("click", function () {
+        if (!STATE.ready) {
+            // 首次点击 = START 进入 ready 状态
+            STATE.ready = true;
+            log("INFO", "[floater] ▶ 用户点击开始,进入答题循环");
+            showToast("已开始 - 按音量减 或 floater 当前按钮触发单题");
+        } else {
+            log("INFO", "[floater] 下一题按钮");
+            onTriggerNextQuestion();
+        }
+        updateFloaterUi();
+    });
     if (views.btn_pause) views.btn_pause.on("click", function () {
         STATE.paused = !STATE.paused;
         showToast(STATE.paused ? "已暂停" : "已恢复");
@@ -554,11 +566,21 @@ function updateFloaterUi() {
 
             // 非最小化时刷新内容
             if (!STATE.minimized) {
-                if (views.state_text) views.state_text.setText("状态:" + STATE.current + (STATE.paused ? "（已暂停）" : ""));
+                // 状态文字:反映 ready / paused
+                var stateLabel = STATE.ready ? STATE.current : "待启动 — 点 ▶ 开始";
+                if (STATE.paused) stateLabel += "（已暂停）";
+                if (views.state_text) views.state_text.setText("状态:" + stateLabel);
                 if (views.stats_text) views.stats_text.setText("已答 " + STATS.runs + "  成功 " + STATS.success + " 失败 " + STATS.fail);
                 if (views.duration_text) {
                     var sec = Math.round(STATE.lastDuration / 1000);
                     views.duration_text.setText("耗时:" + (sec > 0 ? sec + "s" : "--"));
+                }
+                // START 按钮:未 ready 时绿色高亮 + 文字 "▶ 开始",已 ready 后灰色 + "下一题"
+                if (views.btn_next) {
+                    views.btn_next.setText(STATE.ready ? "下一题" : "▶ 开始");
+                    views.btn_next.setBackgroundColor(STATE.ready
+                        ? android.graphics.Color.parseColor("#FF424242")  // 灰色(默认)
+                        : android.graphics.Color.parseColor("#FF1B5E20")); // 醒目绿
                 }
             }
             if (views.error_text) {
@@ -1130,6 +1152,15 @@ function main() {
         events.onKeyDown(config.triggerKey, function (event) {
             // 仅响应"按下"瞬间；忽略抬起与长按重复
             if (event.getAction() === 0) {
+                if (!STATE.ready) {
+                    showToast("请先点 floater 上的 ▶ 开始 按钮");
+                    log("INFO", "[hotkey] 未启动,忽略按键");
+                    return;
+                }
+                if (STATE.paused) {
+                    log("INFO", "[hotkey] 已暂停,忽略按键");
+                    return;
+                }
                 onTriggerNextQuestion();
             }
         });
