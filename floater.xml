@@ -8,16 +8,21 @@
 -->
 <frame id="floater_root" w="200dp" h="300dp" bg="#CC1E1E1E" padding="6dp">
     <linear w="*" h="*" orientation="vertical">
-        <!-- 标题栏（拖动手柄） -->
-        <frame id="title_bar" w="*" h="28dp" bg="#FF2A2A2A" marginBottom="4dp">
+        <!-- 标题栏（拖动手柄 + 最小化/恢复按钮） -->
+        <linear id="title_bar" w="*" h="28dp" bg="#FF2A2A2A" marginBottom="4dp"
+                orientation="horizontal" gravity="center_vertical">
             <text id="title_text"
-                  w="*" h="match_parent"
+                  w="0dp" h="match_parent" layout_weight="1"
                   text="学习通助手 v1.2"
                   textColor="#FFE6E6E6"
                   textSize="12sp"
-                  gravity="center"
-                  paddingLeft="8dp" paddingRight="8dp"/>
-        </frame>
+                  gravity="center_vertical"
+                  paddingLeft="8dp"/>
+            <button id="btn_min" w="32dp" h="22dp"
+                    text="−"
+                    textSize="16sp" textColor="#FFE6E6E6"
+                    bg="#FF424242" marginRight="2dp"/>
+        </linear>
         <!-- 状态区（3 行） -->
         <linear w="*" h="wrap_content" orientation="vertical" marginBottom="4dp">
             <text id="state_text" w="*" h="wrap_content" text="状态：空闲"

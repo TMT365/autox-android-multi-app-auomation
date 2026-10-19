@@ -76,7 +76,8 @@ var CONFIG_JSON_PATH = files.join(SCRIPT_DIR, "config.json");   // 用户配置�
 var STATE = {
     current:      "空闲",
     lastDuration: 0,
-    paused:       false
+    paused:       false,
+    minimized:    false                          // 悬浮窗是否最小化（仅显示标题栏 + 移动按钮）
     // 注意：错误信息统一从 STATS.lastError 读取，processOneQuestion 各失败分支
     // 直接写 STATS.lastError 即可，updateFloaterUi 会自动同步到悬浮窗。
 };
@@ -457,8 +458,8 @@ function initFloater() {
         floater = null;
         return;
     }
-    var ids = ["title_text","state_text","stats_text","duration_text",
-               "btn_next","btn_pause","btn_stop","btn_clipboard","btn_log","error_text"];
+    var ids = ["title_bar","title_text","state_text","stats_text","duration_text",
+               "btn_min","btn_next","btn_pause","btn_stop","btn_clipboard","btn_log","error_text"];
     for (var i = 0; i < ids.length; i++) {
         var v = null;
         try { v = floater.findView(ids[i]); } catch (e) {}
@@ -466,12 +467,24 @@ function initFloater() {
     }
     var AD=android.view.MotionEvent.ACTION_DOWN, AM=android.view.MotionEvent.ACTION_MOVE,
         AU=android.view.MotionEvent.ACTION_UP, AC=android.view.MotionEvent.ACTION_CANCEL;
-    var downX=0, downY=0;
+    var downX=0, downY=0, dragStarted=false, dragDx=0, dragDy=0;
     try {
-        floater.setOnTouchListener(function (view, event) {
+        // 拖拽监听挂在 title_bar —— 不再与按钮点击冲突
+        // (root 监听会被 button click 事件干扰,挂 title_bar 后只有触摸标题栏才拖动)
+        var dragTarget = views.title_bar || floater;
+        dragTarget.setOnTouchListener(function (view, event) {
             var a = event.getAction();
-            if (a === AD) { downX = event.getRawX(); downY = event.getRawY(); return true; }
+            if (a === AD) {
+                downX = event.getRawX(); downY = event.getRawY();
+                dragStarted = false;
+                return true;
+            }
             if (a === AM) {
+                dragDx = event.getRawX() - downX;
+                dragDy = event.getRawY() - downY;
+                // 5px 阈值内不动,避免误触
+                if (!dragStarted && Math.abs(dragDx) + Math.abs(dragDy) < 5) return true;
+                dragStarted = true;
                 posX += event.getRawX() - downX; posY += event.getRawY() - downY;
                 try { floater.setPosition(posX, posY); } catch (e) {}
                 downX = event.getRawX(); downY = event.getRawY(); return true;
@@ -480,6 +493,11 @@ function initFloater() {
             return false;
         });
     } catch (e) { log("WARN", "setOnTouchListener 失败: " + (e.message || e)); }
+    if (views.btn_min) views.btn_min.on("click", function () {
+        STATE.minimized = !STATE.minimized;
+        log("INFO", "[floater] " + (STATE.minimized ? "已最小化" : "已恢复"));
+        updateFloaterUi();
+    });
     if (views.btn_next) views.btn_next.on("click", function () { log("INFO","[floater] 下一题按钮"); onTriggerNextQuestion(); });
     if (views.btn_pause) views.btn_pause.on("click", function () {
         STATE.paused = !STATE.paused;
@@ -516,26 +534,59 @@ function updateFloaterUi() {
     _lastUiUpdateAt = now;
     var apply = function () {
         try {
-            if (views.title_text) views.title_text.setText("学习通助手 v" + SCRIPT_VERSION);
-            if (views.state_text) views.state_text.setText("状态:" + STATE.current + (STATE.paused ? "（已暂停）" : ""));
-            if (views.stats_text) views.stats_text.setText("已答 " + STATS.runs + "  成功 " + STATS.success + "  失败 " + STATS.fail);
-            if (views.duration_text) {
-                var sec = Math.round(STATE.lastDuration / 1000);
-                views.duration_text.setText("耗时:" + (sec > 0 ? sec + "s" : "--"));
+            // 标题 + 最小化按钮字符
+            if (views.title_text) {
+                views.title_text.setText(STATE.minimized
+                    ? "助手 v" + SCRIPT_VERSION
+                    : "学习通助手 v" + SCRIPT_VERSION);
+            }
+            if (views.btn_min) views.btn_min.setText(STATE.minimized ? "+" : "−");
+
+            // 最小化时只显示标题栏 + 按钮,其余 GONE
+            var VIS = android.view.View.VISIBLE, GONE = android.view.View.GONE;
+            var hideOnMin = ["state_text", "stats_text", "duration_text",
+                             "btn_next", "btn_pause", "btn_stop",
+                             "btn_clipboard", "btn_log", "error_text"];
+            for (var i = 0; i < hideOnMin.length; i++) {
+                var v = views[hideOnMin[i]];
+                if (v) v.setVisibility(STATE.minimized ? GONE : VIS);
+            }
+
+            // 非最小化时刷新内容
+            if (!STATE.minimized) {
+                if (views.state_text) views.state_text.setText("状态:" + STATE.current + (STATE.paused ? "（已暂停）" : ""));
+                if (views.stats_text) views.stats_text.setText("已答 " + STATS.runs + "  成功 " + STATS.success + " 失败 " + STATS.fail);
+                if (views.duration_text) {
+                    var sec = Math.round(STATE.lastDuration / 1000);
+                    views.duration_text.setText("耗时:" + (sec > 0 ? sec + "s" : "--"));
+                }
             }
             if (views.error_text) {
                 if (STATS.lastError) {
                     views.error_text.setText("⚠ " + STATS.lastError);
-                    views.error_text.setVisibility(android.view.View.VISIBLE);
+                    views.error_text.setVisibility(VIS);
                 } else {
                     views.error_text.setText("");
-                    views.error_text.setVisibility(android.view.View.GONE);
+                    views.error_text.setVisibility(GONE);
                 }
             }
+
+            // 尝试动态改窗口尺寸 —— AutoX v6.5+ 有 floater.setSize(w,h)
+            // 不支持则保持原尺寸,内容已隐藏,功能依然可用
+            try {
+                if (typeof floater.setSize === "function") {
+                    if (STATE.minimized) {
+                        floater.setSize(200, 32);
+                    } else {
+                        floater.setSize(200, 300);
+                    }
+                }
+            } catch (e2) {}
         } catch (e) {}
     };
     try { ui.run(apply); } catch (e) { apply(); }
 }
+
 function destroyFloater() {
     if (!floater) return;
     try {
