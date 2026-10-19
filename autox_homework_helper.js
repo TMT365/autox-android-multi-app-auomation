@@ -349,61 +349,68 @@ function initFloater() {
     var xml = loadFloaterLayout();
     if (!xml) return;
     var posX = 80, posY = 200;
-    ui.run(function () {
-        try { floater = floaty.window(xml); floater.setPosition(posX, posY); }
-        catch (e) { log("ERROR", "创建悬浮窗失败: " + (e.message || e)); floater = null; return; }
-        var ids = ["title_text","state_text","stats_text","duration_text",
-                   "btn_next","btn_pause","btn_stop","btn_clipboard","btn_log","error_text"];
-        for (var i = 0; i < ids.length; i++) {
-            var v = null;
-            try { v = floater.findView(ids[i]); } catch (e) {}
-            views[ids[i]] = v;
-        }
-        var AD=android.view.MotionEvent.ACTION_DOWN, AM=android.view.MotionEvent.ACTION_MOVE,
-            AU=android.view.MotionEvent.ACTION_UP, AC=android.view.MotionEvent.ACTION_CANCEL;
-        var downX=0, downY=0;
-        try {
-            floater.setOnTouchListener(function (view, event) {
-                var a = event.getAction();
-                if (a === AD) { downX = event.getRawX(); downY = event.getRawY(); return true; }
-                if (a === AM) {
-                    posX += event.getRawX() - downX; posY += event.getRawY() - downY;
-                    try { floater.setPosition(posX, posY); } catch (e) {}
-                    downX = event.getRawX(); downY = event.getRawY(); return true;
-                }
-                if (a === AU || a === AC) return true;
-                return false;
-            });
-        } catch (e) { log("WARN", "setOnTouchListener 失败"); }
-        if (views.btn_next) views.btn_next.on("click", function () { log("INFO","[floater] 下一题按钮"); onTriggerNextQuestion(); });
-        if (views.btn_pause) views.btn_pause.on("click", function () {
-            STATE.paused = !STATE.paused;
-            showToast(STATE.paused ? "已暂停" : "已恢复");
-            updateFloaterUi();
+    // ⚠️ 关键：必须在脚本主线程创建,不能套 ui.run()
+    // AutoX v6.6.x 上 ui.run 回调所在线程没有 RhinoJavaScriptEngine 上下文,
+    // floaty.window() 内部要 engine.getRuntime(),会抛 NullPointerException。
+    try {
+        floater = floaty.window(xml);
+        floater.setPosition(posX, posY);
+    } catch (e) {
+        log("ERROR", "创建悬浮窗失败: " + (e.message || e));
+        floater = null;
+        return;
+    }
+    var ids = ["title_text","state_text","stats_text","duration_text",
+               "btn_next","btn_pause","btn_stop","btn_clipboard","btn_log","error_text"];
+    for (var i = 0; i < ids.length; i++) {
+        var v = null;
+        try { v = floater.findView(ids[i]); } catch (e) {}
+        views[ids[i]] = v;
+    }
+    var AD=android.view.MotionEvent.ACTION_DOWN, AM=android.view.MotionEvent.ACTION_MOVE,
+        AU=android.view.MotionEvent.ACTION_UP, AC=android.view.MotionEvent.ACTION_CANCEL;
+    var downX=0, downY=0;
+    try {
+        floater.setOnTouchListener(function (view, event) {
+            var a = event.getAction();
+            if (a === AD) { downX = event.getRawX(); downY = event.getRawY(); return true; }
+            if (a === AM) {
+                posX += event.getRawX() - downX; posY += event.getRawY() - downY;
+                try { floater.setPosition(posX, posY); } catch (e) {}
+                downX = event.getRawX(); downY = event.getRawY(); return true;
+            }
+            if (a === AU || a === AC) return true;
+            return false;
         });
-        if (views.btn_stop) views.btn_stop.on("click", function () {
-            showToast("脚本即将停止"); try { destroyFloater(); } catch (e) {} exit();
-        });
-        if (views.btn_clipboard) views.btn_clipboard.on("click", function () {
-            try {
-                var cm = context.getSystemService(context.CLIPBOARD_SERVICE);
-                var clip = cm.getPrimaryClip();
-                var txt = "";
-                if (clip && clip.getItemCount() > 0) {
-                    var item = clip.getItemAt(0);
-                    if (item && item.getText) txt = item.getText().toString();
-                }
-                setClip(txt); showToast("剪贴板已刷新 " + txt.length + " 字"); STATE.current = "已复制";
-            } catch (e) { STATS.lastError = "复制失败: " + (e.message || e); }
-            updateFloaterUi();
-        });
-        if (views.btn_log) views.btn_log.on("click", function () {
-            showToast("请打开 AutoX 控制台查看日志");
-            try { app.startActivity(context.packageName); } catch (e) {}
-        });
+    } catch (e) { log("WARN", "setOnTouchListener 失败: " + (e.message || e)); }
+    if (views.btn_next) views.btn_next.on("click", function () { log("INFO","[floater] 下一题按钮"); onTriggerNextQuestion(); });
+    if (views.btn_pause) views.btn_pause.on("click", function () {
+        STATE.paused = !STATE.paused;
+        showToast(STATE.paused ? "已暂停" : "已恢复");
         updateFloaterUi();
-        log("INFO", "悬浮窗已就绪 v" + SCRIPT_VERSION);
     });
+    if (views.btn_stop) views.btn_stop.on("click", function () {
+        showToast("脚本即将停止"); try { destroyFloater(); } catch (e) {} exit();
+    });
+    if (views.btn_clipboard) views.btn_clipboard.on("click", function () {
+        try {
+            var cm = context.getSystemService(context.CLIPBOARD_SERVICE);
+            var clip = cm.getPrimaryClip();
+            var txt = "";
+            if (clip && clip.getItemCount() > 0) {
+                var item = clip.getItemAt(0);
+                if (item && item.getText) txt = item.getText().toString();
+            }
+            setClip(txt); showToast("剪贴板已刷新 " + txt.length + " 字"); STATE.current = "已复制";
+        } catch (e) { STATS.lastError = "复制失败: " + (e.message || e); }
+        updateFloaterUi();
+    });
+    if (views.btn_log) views.btn_log.on("click", function () {
+        showToast("请打开 AutoX 控制台查看日志");
+        try { app.startActivity(context.packageName); } catch (e) {}
+    });
+    updateFloaterUi();
+    log("INFO", "悬浮窗已就绪 v" + SCRIPT_VERSION);
 }
 function updateFloaterUi() {
     if (!floater) return;
