@@ -120,18 +120,31 @@ AutoX.js 是依赖**无障碍服务**长期运行的，Android 系统经常会"�
 打开 `autox_homework_helper.js`，根据你的实际环境修改以下配置（详见脚本
 顶部"第一部分"）：
 
-### 5.1 包名确认
+### 5.1 v1.2 新增：部署 `floater.xml`（悬浮窗布局文件）
+
+v1.2 引入了**悬浮窗控制面板**，需要把 `floater.xml` 与脚本一同放到手机：
+
+| 步骤 | 操作 |
+|---|---|
+| 1 | 把 `floater.xml` 拷贝到手机 `/sdcard/AutoX/`（与脚本同目录） |
+| 2 | 或修改脚本顶部 `FLOATER_XML_PATH` 常量指向你的实际路径 |
+| 3 | 确认 AutoX 已授予 **"显示在其他应用上层"** 权限（见 §3.2） |
+| 4 | 重启脚本，第一次 `initFloater()` 会自动加载 |
+
+> ⚠️ 若 `floater.xml` 不存在或路径错误，`initFloater` 会记一条 ERROR 日志并安全退出，脚本仍按 v1.1 模式工作（仅靠物理按键触发）。
+
+### 5.2 包名确认
 
 桌面长按学习通 / 豆包 APP 图标 → 应用信息 → 即可看到包名
 
 ```javascript
 var PACKAGE = {
     XUEXITONG: "com.chaoxing.mobile",   // ← 改成你的实际包名
-    DOUBAO:    "com.litchi.bytebread"   // ← 改成你的实际包名
+    DOUBAO:    "com.larus.nova"         // ← 改成你的实际包名（v6.6.8 实测）
 };
 ```
 
-### 5.2 截图路径（Android 11+）
+### 5.3 截图路径（Android 11+）
 
 ```javascript
 var SCREENSHOT_PATH = "/sdcard/Pictures/AutoX_Screenshot.png";
@@ -154,9 +167,10 @@ var SCREENSHOT_PATH = files.join(context.getExternalFilesDir(null).getAbsolutePa
 2. **手动**打开豆包 → 进入聊天对话界面（确保看到输入框）
 3. 在 AutoX.js 中打开 `autox_homework_helper.js`
 4. 点击 ▶️ 运行按钮
-5. 观察 AutoX 控制台：应打印"=== 启动预检 (v1.1.0) ==="
-6. 手机弹出 Toast：`脚本就绪 v1.1.0`
+5. 观察 AutoX 控制台：应打印"=== 启动预检 (v1.2.0) ==="
+6. 手机弹出 Toast：`脚本就绪 v1.2.0`
 7. 按**音量减**键 → 脚本开始单题流程
+8. （v1.2）屏幕右上角会出现一个**悬浮窗**（约 200dp × 300dp），可拖动，包含 5 个手动控制按钮
 
 ---
 
@@ -166,7 +180,7 @@ var SCREENSHOT_PATH = files.join(context.getExternalFilesDir(null).getAbsolutePa
 
 - **AutoX.js 主界面** → 右上角菜单 → **日志** → 查看实时输出
 - 关键日志关键字：
-  - `=== 启动预检 (v1.1.0) ===` —— 预检开始
+  - `=== 启动预检 (v1.2.0) ===` —— 预检开始
   - `预检通过` —— 通过
   - `开始第 N 题` —— 答题流程
   - `截图已保存` —— 截图成功

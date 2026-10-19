@@ -3,9 +3,9 @@
 > 基于 Android 无障碍 API 的作业流程自动化脚本（学习研究用途）
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![AutoX](https://img.shields.io/badge/AutoX.js-v6.0%2B-blue)](https://github.com/kkevsekk1/AutoX)
+[![AutoX](https://img.shields.io/badge/AutoX.js-v6.6%2B-blue)](https://github.com/autox-community/AutoX/releases/tag/v6.6.8)
 [![Android](https://img.shields.io/badge/Android-9.0%2B-green)](https://developer.android.com/)
-[![Version](https://img.shields.io/badge/version-v1.1.0-orange)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v1.2.0-orange)](CHANGELOG.md)
 
 > ⚠️ **重要风险提示**：本项目仅用于 AutoX.js 编程技术与 Android 无障碍 API
 > 的学习研究。严禁用于任何教育平台的作业/考试作弊、代刷网课等违规用途。
@@ -23,7 +23,11 @@
 3. 等待豆包 AI 回复 → **抓取答案文本** → 写入系统剪贴板
 4. 切回"学习通"APP → **长按答案输入框 → 一键粘贴**
 
-用户按指定按键（默认音量减）即可触发**单题答题循环**。
+用户按指定按键（默认音量减）或点击屏幕上的**悬浮窗控制按钮**即可触发**单题答题循环**。
+
+> 🆕 **v1.2 新增悬浮窗**：脚本运行时会在屏幕右上角显示一个紧凑控制面板，
+> 实时显示状态、统计、耗时、错误信息，并提供 5 个手动控制按钮（下一题 /
+> 暂停 / 停止 / 复制答案 / 打开日志）。详见下方"悬浮窗控制面板"章节。
 
 ### 适用场景
 
@@ -38,10 +42,11 @@
 
 ```bash
 # 1. 把脚本传到手机（任意方式：USB、微信文件传输、网盘等）
-# 2. 在手机 AutoX.js 中打开 autox_homework_helper.js
-# 3. 开启权限：AutoX → 设置 → 权限 → 无障碍 / 悬浮窗 / 存储
-# 4. 手动打开学习通到作业答题页 + 手动打开豆包到聊天界面
-# 5. 运行脚本 → 按音量减开始答题
+# 2. （v1.2 起）floater.xml 也需一并传到 /sdcard/AutoX/
+# 3. 在手机 AutoX.js 中打开 autox_homework_helper.js
+# 4. 开启权限：AutoX → 设置 → 权限 → 无障碍 / 悬浮窗 / 存储 / 显示在其他应用上层
+# 5. 手动打开学习通到作业答题页 + 手动打开豆包到聊天界面
+# 6. 运行脚本 → 按音量减 或 点悬浮窗"下一题"按钮开始答题
 ```
 
 完整安装指南请见 [`INSTALL.md`](INSTALL.md)。
@@ -118,6 +123,44 @@ var SCREENSHOT_PATH = files.join(
 
 ---
 
+## 悬浮窗控制面板（v1.2 新增）
+
+脚本启动后会在屏幕右上角显示一个紧凑的**悬浮窗**（约 200dp × 300dp，半透明深色），可任意拖动。提供实时反馈与手动控制：
+
+```
+┌─────────────────────────┐
+│ 🎓 学习通助手 v1.2     │  ← 标题栏（可拖动）
+├─────────────────────────┤
+│ 状态: 🟢 空闲           │  ← 实时阶段（空闲/截图/等待AI...）
+│ 已答 12  成功 10  失败 2│  ← 累计统计
+│ 耗时: 18s               │  ← 上一题耗时
+├─────────────────────────┤
+│ [下一题] [暂停] [停止]  │
+│ [复制]   [日志]         │
+├─────────────────────────┤
+│ ⚠ 截图失败               │  ← 错误提示（无错时隐藏）
+└─────────────────────────┘
+```
+
+| 按钮 | 作用 |
+|---|---|
+| **下一题** | 触发一次完整的截图→AI→粘贴流程（与音量减等价） |
+| **暂停** | 切换 `STATE.paused`：暂停时按键与按钮均被忽略 |
+| **停止** | 立即关闭悬浮窗并 `exit()` 脚本 |
+| **复制** | 手动刷新剪贴板内容（从系统剪贴板读取后回写） |
+| **日志** | Toast 提示 + 跳转到 AutoX 主界面 |
+
+**双触发冗余**：`ENABLE_HOTKEY=true` 时物理按键与按钮并行工作；设为 `false`
+则只能通过悬浮窗按钮触发（防止某些 ROM 把音量键劫持）。**`ENABLE_FLOATER=false`**
+则完全关闭悬浮窗，回退到 v1.1 行为。详见脚本顶部常量。
+
+**部署要求**：
+- `floater.xml` 必须与脚本在同目录（或修改 `FLOATER_XML_PATH`）
+- AutoX 需授予 **"显示在其他应用上层"** 权限（INSTALL §3.2）
+- 最低支持 AutoX v6.5+
+
+---
+
 ## 主要特性
 
 - 📱 **零 root 依赖**：仅使用 Android 标准无障碍 API
@@ -125,6 +168,7 @@ var SCREENSHOT_PATH = files.join(
 - 🛡️ **超时保护**：每个流程步骤都有超时，失败立刻 Toast 提示并终止
 - 🎯 **多策略查找**：`id → desc → text` 优先级 + 坐标降级，ID 漂移也有兜底
 - 📊 **运行时统计**：`STATS` 跟踪 runs / success / fail / lastError
+- 🪟 **悬浮窗面板（v1.2）**：实时状态、5 个手动控制按钮、可拖动
 - 🧹 **资源清理**：脚本退出钩子自动删除临时截图
 - ⌨️ **按键触发**：单次按键 = 单题流程，避免无限循环滥用
 
@@ -135,6 +179,7 @@ var SCREENSHOT_PATH = files.join(
 ```
 .
 ├── autox_homework_helper.js   # 主脚本（单文件，可在 AutoX.js 中直接运行）
+├── floater.xml                # v1.2 悬浮窗布局（需与脚本同目录部署到手机）
 ├── README.md                  # 本文档
 ├── INSTALL.md                 # 安装指南
 ├── CHANGELOG.md               # 版本历史
@@ -157,7 +202,7 @@ var SCREENSHOT_PATH = files.join(
 | 常量 | 含义 | 默认值 |
 |---|---|---|
 | `PACKAGE.XUEXITONG` | 学习通包名 | `com.chaoxing.mobile` |
-| `PACKAGE.DOUBAO` | 豆包包名 | `com.litchi.bytebread` |
+| `PACKAGE.DOUBAO` | 豆包包名 | `com.larus.nova` |
 | `TIMEOUT.APP_LAUNCH` | 启动 APP 超时（ms） | `20000` |
 | `TIMEOUT.AI_RESPONSE` | 豆包回复超时（ms） | `90000` |
 | `DELAY.POLL_INTERVAL` | 控件轮询间隔（ms） | `600` |
@@ -166,6 +211,9 @@ var SCREENSHOT_PATH = files.join(
 | `SELECTOR.*` | 控件 ID 候选 | （详见脚本） |
 | `COORD.*` | 坐标备用 | 1080×2400 设计 |
 | `NEXT_QUESTION_KEY` | 触发下一题的按键 | `volume_down` |
+| `ENABLE_FLOATER`（v1.2）| 是否启用悬浮窗 | `true` |
+| `ENABLE_HOTKEY`（v1.2）| 是否启用物理按键触发 | `true` |
+| `FLOATER_XML_PATH`（v1.2）| 悬浮窗布局文件路径 | `/sdcard/AutoX/floater.xml` |
 
 ---
 
@@ -226,7 +274,7 @@ DEBUG 模式下，所有 `logDebug()` 调用会输出到 AutoX 控制台。
 
 ## 致谢
 
-- [AutoX.js](https://github.com/kkevsekk1/AutoX) —— 强大的 Android 自动化框架
+- [AutoX.js](https://github.com/autox-community/AutoX) —— 强大的 Android 自动化框架
 - [豆包 AI](https://www.doubao.com) —— 提供 AI 识图能力
 - Android 无障碍服务（AccessibilityService）—— 整个方案的基石
 

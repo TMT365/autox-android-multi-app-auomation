@@ -7,6 +7,30 @@
 
 ---
 
+## [1.2.0] - 2026-10-19
+
+### 新增
+- **悬浮窗控制面板** (`floater.xml` + 4 个 floater 函数)：
+  - `loadFloaterLayout()` 读取外部 XML 布局
+  - `initFloater()` `floaty.window` 渲染、缓存 view、绑定 5 个按钮
+  - `updateFloaterUi()` 实时状态同步，250ms 节流，`ui.run` 跨线程安全
+  - `destroyFloater()` 优雅关闭，二次调用幂等
+- **顶部全局开关** `ENABLE_FLOATER` / `ENABLE_HOTKEY`，false 时回退到 v1.1 行为
+- **`STATE` 状态对象**：`current` / `lastDuration` / `paused` 驱动悬浮窗显示
+- **5 个手动控制按钮**：下一题 / 暂停 / 停止 / 复制答案 / 打开日志
+- **任意位置长按并拖动悬浮窗**（`setOnTouchListener` 全手势捕获）
+- **错误显示**：自动从 `STATS.lastError` 同步，无需手动镜像
+
+### 部署要求
+- `floater.xml` 需与脚本一同推到手机 `/sdcard/AutoX/`
+- AutoX 需授予 **"显示在其他应用上层"** 权限
+- 最低支持 AutoX v6.5+（`floaty.window` 返回 `JsWindow` 才能 `setPosition`/`setOnTouchListener`/`close`）
+
+### 修复
+- 豆包预检：发现并修复 v1.1 中学习通预检条件写反（`!app.getPackageName && !(app.getAppName && ...)`），现在两个 APP 都真实检测后才打印
+
+---
+
 ## [1.1.0] - 2026-10-17
 
 ### 新增
@@ -45,15 +69,14 @@
 
 ## 路线图
 
-### [1.2.0] - 计划中
-- 可选的多选题 / 单选题自动切换（基于题型检测）
-- 答案预览确认（粘贴前先弹 Toast 确认）
-- 多机型坐标预设（小米 / 华为 / OPPO / vivo）
-
 ### [2.0.0] - 长期
 - 模块化拆分（`config.js` / `utils.js` / `doubao.js` / `xuexitong.js`）
 - 支持 `engines.execScriptFile` 项目模式
 - 内置布局分析工具（自动获取控件坐标）
+- 悬浮窗多机位预设（位置记忆 + 不同 ROM 主题色）
+- 可选的多选题 / 单选题自动切换（基于题型检测）
+- 答案预览确认（粘贴前先弹 Toast 确认）
+- 多机型坐标预设（小米 / 华为 / OPPO / vivo）
 
 ---
 
