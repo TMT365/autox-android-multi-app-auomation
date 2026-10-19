@@ -204,12 +204,36 @@ function logDebug(msg) {
  * @param {string} duration   可选 "long" 表示长提示（3.5s），默认短提示（2s）
  */
 function showToast(msg, duration) {
-    duration = duration === "long" ? 1 : 0;
+    // 优先用 AutoX 内置 toast()，最稳；某些 v6.6.x 沙箱下 android.* 不可见
     try {
-        android.widget.Toast.makeText(context, String(msg), duration).show();
+        if (typeof toast === "function") {
+            toast(String(msg));
+            return;
+        }
+    } catch (e) {}
+    try {
+        var d = duration === "long" ? 1 : 0;
+        android.widget.Toast.makeText(context, String(msg), d).show();
     } catch (e) {
-        // 退化方案：写到控制台
+        // 兜底：写到控制台
         log("TOAST", msg);
+    }
+}
+
+/**
+ * 通过 Android PackageManager 检测指定包名是否已安装
+ * 这是 v6.6.x 上最可靠的检测方式——app.getPackageName/pkg 在不同构建里语义不一致
+ * @param {string} pkgName  包名
+ * @returns {boolean}
+ */
+function isPackageInstalled(pkgName) {
+    if (!pkgName) return false;
+    try {
+        var pm = context.getPackageManager();
+        pm.getPackageInfo(String(pkgName), 0);
+        return true;
+    } catch (e1) {
+        return false;
     }
 }
 
@@ -228,23 +252,15 @@ function preflightCheck() {
     }
     log("INFO", "✓ 无障碍服务已开启");
 
-    // 2. 学习通是否安装
-    var xxInstalled = false;
-    try { xxInstalled = !!app.getPackageName(PACKAGE.XUEXITONG); } catch (e1) {
-        try { xxInstalled = !!app.getAppName(PACKAGE.XUEXITONG); } catch (e2) {}
-    }
-    if (!xxInstalled) {
+    // 2. 学习通是否安装（v6.6.x 上用 PackageManager 最可靠）
+    if (!isPackageInstalled(PACKAGE.XUEXITONG)) {
         showToast("未检测到学习通 APP（" + PACKAGE.XUEXITONG + "）", "long");
         return false;
     }
     log("INFO", "✓ 学习通已安装：" + PACKAGE.XUEXITONG);
 
-    // 3. 豆包是否安装
-    var dbInstalled = false;
-    try { dbInstalled = !!app.getPackageName(PACKAGE.DOUBAO); } catch (e1) {
-        try { dbInstalled = !!app.getAppName(PACKAGE.DOUBAO); } catch (e2) {}
-    }
-    if (!dbInstalled) {
+    // 3. 豆包是否安装（v6.6.x 上用 PackageManager 最可靠）
+    if (!isPackageInstalled(PACKAGE.DOUBAO)) {
         showToast("未检测到豆包 APP（" + PACKAGE.DOUBAO + "）", "long");
         return false;
     }
