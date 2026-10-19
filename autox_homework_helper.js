@@ -76,7 +76,7 @@
 
 // ==================== 版本 & 全局开关 ====================
 
-var SCRIPT_VERSION = "1.7.1";           // 当前脚本版本
+var SCRIPT_VERSION = "1.7.2";           // 当前脚本版本
 var DEBUG = false;                      // 调试模式：true 时输出详细日志
 var STATS = { runs: 0, success: 0, fail: 0, lastError: "" };  // 运行时统计
 
@@ -285,9 +285,14 @@ var DEFAULT_CONFIG = {
                 { descContains: "更多", visibleToUser: true, pick: "first" }
             ]
         },
+        // 面板展开实测：bottom_menu 下 4 个 layout_menu_item（均 clickable），
+        // 子 TextView text="相机/相册/文件/打电话"；"相册" 的 TextView
+        // 本身不可点，clickNodeSafe 会向上找 layout_menu_item。
         albumOption: {
             timeout: 2000,
             match: [
+                { text: "相册", idMatches: ".*:id/layout_menu_item_name$",
+                  visibleToUser: true, pick: "first" },
                 { text: "相册", visibleToUser: true, pick: "first" },
                 { text: "照片", visibleToUser: true, pick: "first" },
                 { descContains: "相册", visibleToUser: true, pick: "first" },
@@ -305,9 +310,9 @@ var DEFAULT_CONFIG = {
         sendBtn: {
             timeout: 2000,
             match: [
+                { idMatches: ".*:id/action_send.*", visibleToUser: true, pick: "first" },
                 { desc: "发送", visibleToUser: true, pick: "first" },
-                { text: "发送", visibleToUser: true, pick: "first" },
-                { idMatches: ".*:id/action_send.*", visibleToUser: true, pick: "first" }
+                { text: "发送", visibleToUser: true, pick: "first" }
             ]
         }
     }

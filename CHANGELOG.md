@@ -7,6 +7,36 @@
 
 ---
 
+## [1.7.2] - 2026-10-19
+
+### 豆包"更多面板"展开态校准
+
+实测面板结构（点击 `更多面板` 后）：
+
+```
+bottom_layout > bottom_menu (GridLayout)
+├─ layout_menu_item [clickable] → TextView text="相机"
+├─ layout_menu_item [clickable] → TextView text="相册"   ← 目标
+├─ layout_menu_item [clickable] → TextView text="文件"
+└─ layout_menu_item [clickable] → TextView text="打电话"
+```
+
+要点：
+- 4 个 `layout_menu_item` **共用同一个 id**，只能靠子 TextView 的 text 区分
+- "相册" TextView 本身不可点 → `clickNodeSafe()` 向上找可点父容器
+- 面板打开后 `更多面板` 的 desc 变为 `关闭面板`，输入区整体上移
+  （y: 2086→1197），因此每次展开面板都要增量重扫
+
+### 修改
+- `aiControls.albumOption` 首选
+  `text="相册" + idMatches=".*:id/layout_menu_item_name$"`（限定菜单项，
+  避免误中聊天内容里的"相册"字样）
+- `aiControls.sendBtn` 首选 `idMatches=".*:id/action_send.*"`
+- 面板展开后的增量扫描（v1.7 已实现）现在能正确记录相册菜单坐标
+- SCRIPT_VERSION 1.7.1 → 1.7.2
+
+---
+
 ## [1.7.1] - 2026-10-19
 
 ### 豆包真机 dump 校准（com.larus.nova）

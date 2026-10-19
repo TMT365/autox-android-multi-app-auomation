@@ -270,6 +270,12 @@
       "match": [
         {
           "text": "相册",
+          "idMatches": ".*:id/layout_menu_item_name$",
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
+          "text": "相册",
           "visibleToUser": true,
           "pick": "first"
         },
@@ -314,17 +320,17 @@
       "timeout": 2000,
       "match": [
         {
+          "idMatches": ".*:id/action_send.*",
+          "visibleToUser": true,
+          "pick": "first"
+        },
+        {
           "desc": "发送",
           "visibleToUser": true,
           "pick": "first"
         },
         {
           "text": "发送",
-          "visibleToUser": true,
-          "pick": "first"
-        },
-        {
-          "idMatches": ".*:id/action_send.*",
           "visibleToUser": true,
           "pick": "first"
         }
