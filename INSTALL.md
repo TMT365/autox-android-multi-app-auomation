@@ -8,7 +8,7 @@
 
 ### 1.1 下载 AutoX.js
 
-- 官方 GitHub：[kkevsekk1/AutoX](https://github.com/kkevsekk1/AutoX/releases)
+- 官方 GitHub：[autox-community/AutoX v6.6.8](https://github.com/autox-community/AutoX/releases/tag/v6.6.8)
 - 推荐版本：**v6.6.0+**（不需要 Pro 7 的收费 API）
 
 > ⚠️ 注意区分"AutoX.js"和"Auto.js Pro"。本脚本不依赖 Pro 收费功能。
