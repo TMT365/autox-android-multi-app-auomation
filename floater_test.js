@@ -132,12 +132,25 @@ for (var i = 0; i < candidates.length; i++) {
 
 if (xml) {
     console.log("[OK] 命中: " + hitPath + " (" + xml.length + " 字节)");
+    // 去 BOM
+    if (xml.charCodeAt && xml.charCodeAt(0) === 0xFEFF) {
+        xml = xml.substring(1);
+        console.log("[INFO] 已去除 UTF-8 BOM");
+    }
+    // 转 Rhino XML 对象 —— floaty.window 期望 XML 对象,字符串会 NPE
+    var xmlObj = null;
+    try { xmlObj = new XML(xml); console.log("[INFO] new XML() 解析成功"); }
+    catch (e1) {
+        console.warn("[WARN] new XML() 解析失败: " + (e1.message || e1));
+        xmlObj = xml;  // 降级字符串
+    }
+
     // 关掉测试 A 的窗口
     try { if (winA && winA.close) winA.close(); else if (winA && winA.exit) winA.exit(); } catch (e) {}
 
     var winB = null;
     try {
-        winB = floaty.window(xml);
+        winB = floaty.window(xmlObj);
         console.log("[OK] 测试 B 通过:外部 XML 窗口已创建");
         winB.setPosition(50, 300);
     } catch (e) {

@@ -338,7 +338,20 @@ function loadFloaterLayout() {
         log("INFO", "floater 布局: " + path);
     }
     try {
-        return files.read(path);
+        var content = files.read(path);
+        // 1) 去掉可能的 UTF-8 BOM（Windows 编辑器常加）
+        if (content && content.charCodeAt && content.charCodeAt(0) === 0xFEFF) {
+            content = content.substring(1);
+        }
+        // 2) 转成 Rhino XML 对象 —— floaty.window() 期望 XML 对象,直接传字符串会 NPE
+        //    Test A(内联 E4X)和 Test B(字符串)的差异就是这个
+        try {
+            return new XML(content);
+        } catch (e1) {
+            // 解析失败,降级返回字符串,让 floaty.window 自己再尝试
+            log("WARN", "floater XML 解析失败,降级字符串: " + (e1.message || e1));
+            return content;
+        }
     } catch (e) {
         log("ERROR", "读取 floater 布局失败 (" + path + "): " + (e.message || e));
         return null;
