@@ -291,10 +291,58 @@ function cleanup() {
 }
 
 /* --- v1.2 悬浮窗相关函数（完整实现见 design 文档 jsAdditions） --- */
+/**
+ * 在多个常见位置查找 floater.xml:
+ * 1) 用户配置的 FLOATER_XML_PATH（默认 /sdcard/AutoX/floater.xml）
+ * 2) AutoX 应用私有目录（始终可读,无需权限）
+ * 3) 脚本当前工作目录（与 .js 同目录时能命中）
+ * 4) /sdcard/AutoX、Download、Documents（常见下载位置）
+ * @returns {?string} 命中则返回绝对路径,否则 null
+ */
+function resolveFloaterLayoutPath() {
+    var sdcard;
+    try { sdcard = files.getSdcardPath(); } catch (e) {}
+    var appPriv = null;
+    try { appPriv = context.getExternalFilesDir(null).getAbsolutePath(); } catch (e) {}
+    var cwd = null;
+    try { cwd = files.cwd(); } catch (e) {}
+
+    var candidates = [
+        FLOATER_XML_PATH,
+        appPriv ? files.join(appPriv, "floater.xml") : null,
+        cwd     ? files.join(cwd,    "floater.xml") : null,
+        sdcard  ? files.join(sdcard, "AutoX",     "floater.xml") : null,
+        sdcard  ? files.join(sdcard, "Download",  "floater.xml") : null,
+        sdcard  ? files.join(sdcard, "Documents", "floater.xml") : null
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+        var p = candidates[i];
+        if (!p) continue;
+        try { if (files.exists(p)) return p; } catch (e) {}
+    }
+    return null;
+}
 function loadFloaterLayout() {
-    var path = FLOATER_XML_PATH;
-    if (!files.exists(path)) { log("ERROR", "floater 布局文件不存在: " + path); return null; }
-    try { return files.read(path); } catch (e) { log("ERROR", "读取 floater 布局失败: " + (e.message || e)); return null; }
+    var path = resolveFloaterLayoutPath();
+    if (!path) {
+        log("ERROR", "floater 布局文件找不到,请确认:");
+        log("ERROR", "  1. floater.xml 已传到手机（与脚本同目录最方便）");
+        log("ERROR", "  2. 或修改脚本顶部 FLOATER_XML_PATH 指向实际路径");
+        log("ERROR", "已尝试: " + FLOATER_XML_PATH +
+            " | AutoX私有目录 | 脚本cwd | /sdcard/AutoX/Download/Documents");
+        return null;
+    }
+    if (path !== FLOATER_XML_PATH) {
+        log("INFO", "floater 布局命中: " + path + "（非默认,后续可改 FLOATER_XML_PATH 锁定）");
+    } else {
+        log("INFO", "floater 布局: " + path);
+    }
+    try {
+        return files.read(path);
+    } catch (e) {
+        log("ERROR", "读取 floater 布局失败 (" + path + "): " + (e.message || e));
+        return null;
+    }
 }
 function initFloater() {
     if (!ENABLE_FLOATER) { log("INFO", "ENABLE_FLOATER=false, 跳过悬浮窗初始化"); return; }
