@@ -6,7 +6,7 @@
   拖拽：在任意位置长按并拖动（由 initFloater 的 setOnTouchListener 处理）
   控件 ID 必须与 initFloater 中查找的 id 列表保持一致
 -->
-<frame id="floater_root" w="220dp" h="320dp" bg="#DD1E1E1E" padding="6dp">
+<frame id="floater_root" w="240dp" h="380dp" bg="#DD1E1E1E" padding="6dp">
     <linear w="*" h="*" orientation="vertical">
         <!-- 标题栏（拖动手柄 + 最小化/恢复按钮） -->
         <linear id="title_bar" w="*" h="28dp" bg="#FF2A2A2A" marginBottom="4dp"

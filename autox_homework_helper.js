@@ -76,7 +76,7 @@
 
 // ==================== 版本 & 全局开关 ====================
 
-var SCRIPT_VERSION = "1.7.2";           // 当前脚本版本
+var SCRIPT_VERSION = "1.7.3";           // 当前脚本版本
 var DEBUG = false;                      // 调试模式：true 时输出详细日志
 var STATS = { runs: 0, success: 0, fail: 0, lastError: "" };  // 运行时统计
 
@@ -91,6 +91,10 @@ var FLOATER_XML_PATH = files.join(SCRIPT_DIR, "floater.xml");   // 悬浮窗布�
 var CONFIG_JSON_PATH = files.join(SCRIPT_DIR, "config.json");   // 用户配置文件（与脚本同目录）
 var PAGE_CACHE_PATH = files.join(SCRIPT_DIR, "page_cache.json"); // v1.7 页面控件坐标缓存（每次扫描覆盖）
 var pageCache = null;                                            // 内存中的当前页缓存
+
+// v1.7.3 悬浮窗尺寸（px）—— setSize 的单位是像素，不是 dp
+var FLOATER_SIZE = { w: 0, h: 0, minH: 0 };
+var _lastFloaterMinState = null;
 var STATE = {
     current:      "空闲",
     lastDuration: 0,
@@ -604,7 +608,22 @@ function initFloater() {
     // floaty.window() 内部要 engine.getRuntime(),会抛 NullPointerException。
     try {
         floater = floaty.window(xml);
+        // v1.7.3: 按屏幕密度换算像素，避免 XML 尺寸单位被当成 px 导致窗口过小
+        var dm = null;
+        try { dm = context.getResources().getDisplayMetrics(); } catch (e0) {}
+        var density = (dm && dm.density) ? dm.density : 3;
+        var wPx = Math.round(240 * density);
+        var hPx = Math.round(380 * density);
+        var minH = Math.round(40 * density);
+        if (wPx > device.width - 20) wPx = device.width - 20;
+        if (hPx > device.height - 40) hPx = device.height - 40;
+        FLOATER_SIZE = { w: wPx, h: hPx, minH: minH };
+        try { floater.setSize(FLOATER_SIZE.w, FLOATER_SIZE.h); } catch (e1) {
+            log("WARN", "setSize 失败，使用 XML 尺寸: " + (e1.message || e1));
+        }
+        _lastFloaterMinState = STATE.minimized;
         floater.setPosition(posX, posY);
+        log("INFO", "悬浮窗尺寸: " + FLOATER_SIZE.w + "x" + FLOATER_SIZE.h + "px (" + density + "x)");
     } catch (e) {
         log("ERROR", "创建悬浮窗失败: " + (e.message || e));
         floater = null;
@@ -778,15 +797,15 @@ function updateFloaterUi() {
                 }
             }
 
-            // 尝试动态改窗口尺寸 —— AutoX v6.5+ 有 floater.setSize(w,h)
-            // 不支持则保持原尺寸,内容已隐藏,功能依然可用
+            // 只在最小化状态切换时改尺寸（避免每次刷新都重设）
+            // 注意：setSize 单位是 px，必须用 FLOATER_SIZE 里按密度换算好的值
             try {
-                if (typeof floater.setSize === "function") {
-                    if (STATE.minimized) {
-                        floater.setSize(200, 32);
-                    } else {
-                        floater.setSize(200, 300);
-                    }
+                if (typeof floater.setSize === "function" &&
+                    _lastFloaterMinState !== STATE.minimized &&
+                    FLOATER_SIZE.w > 0) {
+                    _lastFloaterMinState = STATE.minimized;
+                    floater.setSize(FLOATER_SIZE.w,
+                        STATE.minimized ? FLOATER_SIZE.minH : FLOATER_SIZE.h);
                 }
             } catch (e2) {}
         } catch (e) {}
