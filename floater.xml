@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  floater.xml —— v1.2 悬浮窗布局
+  AutoX.js v6.6.x XML dialect
+  设计尺寸：~200dp x 300dp（紧凑、半透明）
+  拖拽：在任意位置长按并拖动（由 initFloater 的 setOnTouchListener 处理）
+  控件 ID 必须与 initFloater 中查找的 id 列表保持一致
+-->
+<frame id="floater_root" w="200dp" h="300dp" bg="#CC1E1E1E" padding="6dp">
+    <linear w="*" h="*" orientation="vertical">
+        <!-- 标题栏（拖动手柄） -->
+        <frame id="title_bar" w="*" h="28dp" bg="#FF2A2A2A" marginBottom="4dp">
+            <text id="title_text"
+                  w="*" h="match_parent"
+                  text="学习通助手 v1.2"
+                  textColor="#FFE6E6E6"
+                  textSize="12sp"
+                  gravity="center"
+                  paddingLeft="8dp" paddingRight="8dp"/>
+        </frame>
+        <!-- 状态区（3 行） -->
+        <linear w="*" h="wrap_content" orientation="vertical" marginBottom="4dp">
+            <text id="state_text" w="*" h="wrap_content" text="状态：空闲"
+                  textColor="#FFB0E0B0" textSize="12sp"
+                  marginBottom="2dp" paddingLeft="4dp"/>
+            <text id="stats_text" w="*" h="wrap_content" text="已答 0  成功 0  失败 0"
+                  textColor="#FFE0E0E0" textSize="12sp"
+                  marginBottom="2dp" paddingLeft="4dp"/>
+            <text id="duration_text" w="*" h="wrap_content" text="耗时：--"
+                  textColor="#FFB0B0E0" textSize="12sp" paddingLeft="4dp"/>
+        </linear>
+        <!-- 按钮行（5 个等宽按钮） -->
+        <linear w="*" h="wrap_content" orientation="horizontal" gravity="center_vertical">
+            <button id="btn_next" w="0dp" h="36dp" layout_weight="1"
+                    text="下一题" textSize="11sp" textColor="#FFFFFFFF"
+                    bg="#FF424242" marginRight="2dp"/>
+            <button id="btn_pause" w="0dp" h="36dp" layout_weight="1"
+                    text="暂停" textSize="11sp" textColor="#FFFFFFFF"
+                    bg="#FF424242" marginRight="2dp"/>
+            <button id="btn_stop" w="0dp" h="36dp" layout_weight="1"
+                    text="停止" textSize="11sp" textColor="#FFFFFFFF"
+                    bg="#FF424242" marginRight="2dp"/>
+            <button id="btn_clipboard" w="0dp" h="36dp" layout_weight="1"
+                    text="复制" textSize="11sp" textColor="#FFFFFFFF"
+                    bg="#FF424242" marginRight="2dp"/>
+            <button id="btn_log" w="0dp" h="36dp" layout_weight="1"
+                    text="日志" textSize="11sp" textColor="#FFFFFFFF"
+                    bg="#FF424242"/>
+        </linear>
+        <!-- 错误提示行（默认 GONE，STATE.lastError 有内容时显示） -->
+        <text id="error_text" w="*" h="wrap_content" text=""
+              textColor="#FFFF6060" textSize="11sp"
+              marginTop="4dp" paddingLeft="4dp" paddingRight="4dp"
+              visibility="gone"/>
+    </linear>
+</frame>

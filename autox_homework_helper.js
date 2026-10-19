@@ -19,6 +19,14 @@
  *    · AutoX.js v6.0+（不依赖 Pro 7 收费 API）
  *    · Android 9.0+（Android 11+ 需授予"所有文件访问权限"或专用目录）
  *
+ *  【v1.2 新增】
+ *    · 悬浮窗控制面板（floaty.window + 外部 floater.xml 布局）
+ *    · ENABLE_FLOATER / ENABLE_HOTKEY 全局开关（顶部常量，false 时回退到 v1.1 行为）
+ *    · STATE 状态对象（current / lastDuration / lastError / paused）+ updateFloaterUi() 实时同步
+ *    · initFloater / destroyFloater 生命周期管理（含 250ms UI 节流）
+ *    · 五个控制按钮：下一题 / 暂停 / 停止 / 复制答案 / 打开日志
+ *    · 任意位置长按拖拽悬浮窗
+ *
  *  【v1.1 新增】
  *    · SCRIPT_VERSION 版本号常量
  *    · preflightCheck() 启动前检查（无障碍服务 + 两 APP 是否安装）
@@ -38,9 +46,24 @@
 
 // ==================== 版本 & 全局开关 ====================
 
-var SCRIPT_VERSION = "1.1.0";           // 当前脚本版本
+var SCRIPT_VERSION = "1.2.0";           // 当前脚本版本
 var DEBUG = false;                      // 调试模式：true 时输出详细日志
 var STATS = { runs: 0, success: 0, fail: 0, lastError: "" };  // 运行时统计
+
+// === v1.2 新增：悬浮窗与按键开关 ===
+var ENABLE_FLOATER   = true;                                  // 是否启用悬浮窗
+var ENABLE_HOTKEY    = true;                                  // 是否启用物理按键触发
+var FLOATER_XML_PATH = "/sdcard/AutoX/floater.xml";           // 布局文件路径（需手工放置到手机）
+var STATE = {
+    current:      "空闲",
+    lastDuration: 0,
+    paused:       false
+    // 注意：错误信息统一从 STATS.lastError 读取，processOneQuestion 各失败分支
+    // 直接写 STATS.lastError 即可，updateFloaterUi 会自动同步到悬浮窗。
+};
+var floater = null;
+var views   = {};
+var _lastUiUpdateAt = 0;
 
 
 /* ====================================================================
@@ -51,7 +74,7 @@ var STATS = { runs: 0, success: 0, fail: 0, lastError: "" };  // 运行时统计
 // 备注：桌面长按 APP 图标 → 应用信息 → 即可看到包名
 var PACKAGE = {
     XUEXITONG: "com.chaoxing.mobile",   // 学习通（超星）
-    DOUBAO:    "com.litchi.bytebread"   // 豆包（若版本不同可改为 com.bytedance.doubao）
+    DOUBAO:    "com.larus.nova"         // 豆包（v6.6.8 实测，桌面长按图标→应用信息 可查到包名）
 };
 
 
@@ -165,6 +188,7 @@ function log(level, msg) {
     if (level === "ERROR") console.error(line);
     else if (level === "WARN") console.warn(line);
     else console.log(line);
+    updateFloaterUi();
 }
 
 /**
@@ -205,16 +229,13 @@ function preflightCheck() {
     log("INFO", "✓ 无障碍服务已开启");
 
     // 2. 学习通是否安装
-    if (!app.getPackageName && !(app.getAppName && app.getAppName(PACKAGE.XUEXITONG))) {
-        // AutoX 不同版本 API 名称略有差异，做兼容判断
-        var xxInstalled = false;
-        try { xxInstalled = !!app.getPackageName(PACKAGE.XUEXITONG); } catch (e1) {
-            try { xxInstalled = !!app.getAppName(PACKAGE.XUEXITONG); } catch (e2) {}
-        }
-        if (!xxInstalled) {
-            showToast("未检测到学习通 APP（" + PACKAGE.XUEXITONG + "）", "long");
-            return false;
-        }
+    var xxInstalled = false;
+    try { xxInstalled = !!app.getPackageName(PACKAGE.XUEXITONG); } catch (e1) {
+        try { xxInstalled = !!app.getAppName(PACKAGE.XUEXITONG); } catch (e2) {}
+    }
+    if (!xxInstalled) {
+        showToast("未检测到学习通 APP（" + PACKAGE.XUEXITONG + "）", "long");
+        return false;
     }
     log("INFO", "✓ 学习通已安装：" + PACKAGE.XUEXITONG);
 
@@ -250,6 +271,112 @@ function cleanup() {
         " fail=" + STATS.fail +
         " lastError=" + STATS.lastError
     );
+    destroyFloater();
+}
+
+/* --- v1.2 悬浮窗相关函数（完整实现见 design 文档 jsAdditions） --- */
+function loadFloaterLayout() {
+    var path = FLOATER_XML_PATH;
+    if (!files.exists(path)) { log("ERROR", "floater 布局文件不存在: " + path); return null; }
+    try { return files.read(path); } catch (e) { log("ERROR", "读取 floater 布局失败: " + (e.message || e)); return null; }
+}
+function initFloater() {
+    if (!ENABLE_FLOATER) { log("INFO", "ENABLE_FLOATER=false, 跳过悬浮窗初始化"); return; }
+    var xml = loadFloaterLayout();
+    if (!xml) return;
+    var posX = 80, posY = 200;
+    ui.run(function () {
+        try { floater = floaty.window(xml); floater.setPosition(posX, posY); }
+        catch (e) { log("ERROR", "创建悬浮窗失败: " + (e.message || e)); floater = null; return; }
+        var ids = ["title_text","state_text","stats_text","duration_text",
+                   "btn_next","btn_pause","btn_stop","btn_clipboard","btn_log","error_text"];
+        for (var i = 0; i < ids.length; i++) {
+            var v = null;
+            try { v = floater.findView(ids[i]); } catch (e) {}
+            views[ids[i]] = v;
+        }
+        var AD=android.view.MotionEvent.ACTION_DOWN, AM=android.view.MotionEvent.ACTION_MOVE,
+            AU=android.view.MotionEvent.ACTION_UP, AC=android.view.MotionEvent.ACTION_CANCEL;
+        var downX=0, downY=0;
+        try {
+            floater.setOnTouchListener(function (view, event) {
+                var a = event.getAction();
+                if (a === AD) { downX = event.getRawX(); downY = event.getRawY(); return true; }
+                if (a === AM) {
+                    posX += event.getRawX() - downX; posY += event.getRawY() - downY;
+                    try { floater.setPosition(posX, posY); } catch (e) {}
+                    downX = event.getRawX(); downY = event.getRawY(); return true;
+                }
+                if (a === AU || a === AC) return true;
+                return false;
+            });
+        } catch (e) { log("WARN", "setOnTouchListener 失败"); }
+        if (views.btn_next) views.btn_next.on("click", function () { log("INFO","[floater] 下一题按钮"); onTriggerNextQuestion(); });
+        if (views.btn_pause) views.btn_pause.on("click", function () {
+            STATE.paused = !STATE.paused;
+            showToast(STATE.paused ? "已暂停" : "已恢复");
+            updateFloaterUi();
+        });
+        if (views.btn_stop) views.btn_stop.on("click", function () {
+            showToast("脚本即将停止"); try { destroyFloater(); } catch (e) {} exit();
+        });
+        if (views.btn_clipboard) views.btn_clipboard.on("click", function () {
+            try {
+                var cm = context.getSystemService(context.CLIPBOARD_SERVICE);
+                var clip = cm.getPrimaryClip();
+                var txt = "";
+                if (clip && clip.getItemCount() > 0) {
+                    var item = clip.getItemAt(0);
+                    if (item && item.getText) txt = item.getText().toString();
+                }
+                setClip(txt); showToast("剪贴板已刷新 " + txt.length + " 字"); STATE.current = "已复制";
+            } catch (e) { STATS.lastError = "复制失败: " + (e.message || e); }
+            updateFloaterUi();
+        });
+        if (views.btn_log) views.btn_log.on("click", function () {
+            showToast("请打开 AutoX 控制台查看日志");
+            try { app.startActivity(context.packageName); } catch (e) {}
+        });
+        updateFloaterUi();
+        log("INFO", "悬浮窗已就绪 v" + SCRIPT_VERSION);
+    });
+}
+function updateFloaterUi() {
+    if (!floater) return;
+    var now = Date.now();
+    if (now - _lastUiUpdateAt < 250) return;
+    _lastUiUpdateAt = now;
+    var apply = function () {
+        try {
+            if (views.title_text) views.title_text.setText("学习通助手 v" + SCRIPT_VERSION);
+            if (views.state_text) views.state_text.setText("状态:" + STATE.current + (STATE.paused ? "（已暂停）" : ""));
+            if (views.stats_text) views.stats_text.setText("已答 " + STATS.runs + "  成功 " + STATS.success + "  失败 " + STATS.fail);
+            if (views.duration_text) {
+                var sec = Math.round(STATE.lastDuration / 1000);
+                views.duration_text.setText("耗时:" + (sec > 0 ? sec + "s" : "--"));
+            }
+            if (views.error_text) {
+                if (STATS.lastError) {
+                    views.error_text.setText("⚠ " + STATS.lastError);
+                    views.error_text.setVisibility(android.view.View.VISIBLE);
+                } else {
+                    views.error_text.setText("");
+                    views.error_text.setVisibility(android.view.View.GONE);
+                }
+            }
+        } catch (e) {}
+    };
+    try { ui.run(apply); } catch (e) { apply(); }
+}
+function destroyFloater() {
+    if (!floater) return;
+    try {
+        if (typeof floater.close === "function") floater.close();
+        else if (typeof floater.exit === "function") floater.exit();
+        else floater.setVisibility(android.view.View.GONE);
+    } catch (e) { log("WARN", "关闭悬浮窗失败: " + (e.message || e)); }
+    floater = null;
+    views   = {};
 }
 
 // 注册退出钩子（Android 杀进程时不一定触发，仅作善后）
@@ -759,14 +886,22 @@ function main() {
     printUsage();
     printRiskWarning();
 
-    // 3) 注册按键监听
-    events.observeKey();
-    events.onKeyDown(NEXT_QUESTION_KEY, function (event) {
-        // 仅响应"按下"瞬间；忽略抬起与长按重复
-        if (event.getAction() === 0) {
-            onTriggerNextQuestion();
-        }
-    });
+    // 2.5) v1.2: 初始化悬浮窗
+    try { initFloater(); }
+    catch (e) { log("WARN", "initFloater 失败: " + (e.message || e)); }
+
+    // 3) 注册按键监听（v1.2: ENABLE_HOTKEY=false 时跳过物理按键，仅靠悬浮窗按钮触发）
+    if (ENABLE_HOTKEY) {
+        events.observeKey();
+        events.onKeyDown(NEXT_QUESTION_KEY, function (event) {
+            // 仅响应"按下"瞬间；忽略抬起与长按重复
+            if (event.getAction() === 0) {
+                onTriggerNextQuestion();
+            }
+        });
+    } else {
+        log("INFO", "ENABLE_HOTKEY=false, 跳过物理按键监听（仅靠悬浮窗按钮触发）");
+    }
 
     // 4) 提示就绪
     var readyMsg =
