@@ -7,6 +7,23 @@
 
 ---
 
+## [1.4.0] - 2026-10-19
+
+### 简化部署
+- **统一部署要求**：`autox_homework_helper.js`、`floater.xml`、`config.json` 三文件必须在同一目录
+- 脚本启动时通过 `files.cwd()` 自动取得 `SCRIPT_DIR`，`FLOATER_XML_PATH` 和 `CONFIG_JSON_PATH` 自动派生
+- 删除 `resolveFloaterLayoutPath()` 多路径查找函数（约 25 行删除）
+- 删除 `loadConfig()` 内 6 路径候选列表（约 12 行删除）
+- 删除 `config.floaterXmlPath` 字段（已弃用），`config.example.json` 同步精简
+- 失败时错误日志直接指向 `SCRIPT_DIR`，提示更明确
+
+### 兼容
+- `config.json` 不存在 → 用 `DEFAULT_CONFIG`（行为与 v1.3 一致）
+- `config.json` 解析失败 → WARN + 回退默认，绝不抛错
+- floater.xml 不存在 → ERROR + 提示路径，不再静默降级到按键模式
+
+---
+
 ## [1.2.0] - 2026-10-19
 
 ### 新增

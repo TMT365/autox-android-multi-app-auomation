@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![AutoX](https://img.shields.io/badge/AutoX.js-v6.6%2B-blue)](https://github.com/autox-community/AutoX/releases/tag/v6.6.8)
 [![Android](https://img.shields.io/badge/Android-9.0%2B-green)](https://developer.android.com/)
-[![Version](https://img.shields.io/badge/version-v1.2.0-orange)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v1.4.0-orange)](CHANGELOG.md)
 
 > ⚠️ **重要风险提示**：本项目仅用于 AutoX.js 编程技术与 Android 无障碍 API
 > 的学习研究。严禁用于任何教育平台的作业/考试作弊、代刷网课等违规用途。
@@ -41,10 +41,13 @@
 ## 快速开始
 
 ```bash
-# 1. 把脚本传到手机（任意方式：USB、微信文件传输、网盘等）
-# 2. （v1.2 起）floater.xml 也需一并传到 /sdcard/AutoX/
-# 3. 在手机 AutoX.js 中打开 autox_homework_helper.js
-# 4. 开启权限：AutoX → 设置 → 权限 → 无障碍 / 悬浮窗 / 存储 / 显示在其他应用上层
+# 1. 在手机建一个部署目录,如 /sdcard/AutoX/
+# 2. 把 3 个文件推到该目录(详见 INSTALL §5.1):
+#      autox_homework_helper.js
+#      floater.xml          (可选)
+#      config.json          (可选,基于 config.example.json)
+# 3. 在 AutoX.js 中打开部署目录下的 autox_homework_helper.js
+# 4. 开启权限:AutoX → 设置 → 权限 → 无障碍 / 悬浮窗 / 存储 / 显示在其他应用上层
 # 5. 手动打开学习通到作业答题页 + 手动打开豆包到聊天界面
 # 6. 运行脚本 → 按音量减 或 点悬浮窗"下一题"按钮开始答题
 ```
@@ -179,7 +182,8 @@ var SCREENSHOT_PATH = files.join(
 ```
 .
 ├── autox_homework_helper.js   # 主脚本（单文件，可在 AutoX.js 中直接运行）
-├── floater.xml                # v1.2 悬浮窗布局（需与脚本同目录部署到手机）
+├── floater.xml                # 悬浮窗布局（与脚本同目录）
+├── config.example.json        # 配置示例（复制改名为 config.json 即可生效）
 ├── README.md                  # 本文档
 ├── INSTALL.md                 # 安装指南
 ├── CHANGELOG.md               # 版本历史
@@ -211,9 +215,9 @@ var SCREENSHOT_PATH = files.join(
 | `SELECTOR.*` | 控件 ID 候选 | （详见脚本） |
 | `COORD.*` | 坐标备用 | 1080×2400 设计 |
 | `NEXT_QUESTION_KEY` | 触发下一题的按键 | `volume_down` |
-| `ENABLE_FLOATER`（v1.2）| 是否启用悬浮窗 | `true` |
-| `ENABLE_HOTKEY`（v1.2）| 是否启用物理按键触发 | `true` |
-| `FLOATER_XML_PATH`（v1.2）| 悬浮窗布局文件路径 | `/sdcard/AutoX/floater.xml` |
+| `ENABLE_FLOATER`（v1.2/v1.4）| 是否启用悬浮窗 | `true` |
+| `ENABLE_HOTKEY`（v1.2/v1.4）| 是否启用物理按键触发 | `true` |
+| `SCRIPT_DIR`（v1.4）| floater.xml / config.json 所在目录 | `files.cwd()` 自动取得 |
 
 ---
 

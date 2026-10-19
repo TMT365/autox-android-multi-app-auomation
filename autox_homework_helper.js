@@ -28,7 +28,12 @@
  *    · 旧的 PACKAGE/TIMEOUT/DELAY/SELECTOR/COORD/NEXT_QUESTION_KEY/ENABLE_FLOATER/
  *      ENABLE_HOTKEY/FLOATER_XML_PATH 全部下沉为 DEFAULT_*（仅作回退数据源，不再被运行时引用）
  *
- *  【v1.2 新增】
+ *  【v1.4 简化】
+ *    · 部署要求统一：autox_homework_helper.js、floater.xml、config.json 三个文件必须在同一目录
+ *    · floaterXmlPath 字段已弃用,config.json 不再需要指定
+ *    · SCRIPT_DIR 在脚本启动时通过 files.cwd() 取得,所有资源文件路径自动派生
+ *
+ *  【v1.2 新增】(原本被误标 v1.3)
  *    · 悬浮窗控制面板（floaty.window + 外部 floater.xml 布局）
  *    · ENABLE_FLOATER / ENABLE_HOTKEY 全局开关（顶部常量，false 时回退到 v1.1 行为）
  *    · STATE 状态对象（current / lastDuration / lastError / paused）+ updateFloaterUi() 实时同步
@@ -55,12 +60,19 @@
 
 // ==================== 版本 & 全局开关 ====================
 
-var SCRIPT_VERSION = "1.3.0";           // 当前脚本版本
+var SCRIPT_VERSION = "1.4.0";           // 当前脚本版本
 var DEBUG = false;                      // 调试模式：true 时输出详细日志
 var STATS = { runs: 0, success: 0, fail: 0, lastError: "" };  // 运行时统计
 
-// === v1.3 新增：外部配置 ===
-var CONFIG_JSON_PATH = "/sdcard/AutoX/config.json";           // 用户主配置路径
+// === v1.4 简化：脚本所在目录为唯一部署位置 ===
+// 要求 .js / .xml / .json 三个文件必须在同一目录下(由 files.cwd() 取得)
+var SCRIPT_DIR = (function () {
+    try { var d = files.cwd(); if (d) return d; } catch (e) {}
+    log("WARN", "无法获取脚本所在目录,默认 /sdcard/AutoX");
+    return "/sdcard/AutoX";
+})();
+var FLOATER_XML_PATH = files.join(SCRIPT_DIR, "floater.xml");   // 悬浮窗布局（与脚本同目录）
+var CONFIG_JSON_PATH = files.join(SCRIPT_DIR, "config.json");   // 用户配置文件（与脚本同目录）
 var STATE = {
     current:      "空闲",
     lastDuration: 0,
@@ -86,7 +98,7 @@ var DEFAULT_CONFIG = {
     version: 1,
 
     // 顶层字符串
-    floaterXmlPath: "/sdcard/AutoX/floater.xml",   // 悬浮窗布局
+    //   floaterXmlPath 字段已弃用,v1.4 起 floater.xml 强制与 .js 同目录(SCRIPT_DIR)
     screenshotPath: "/sdcard/Pictures/AutoX_Screenshot.png",
     triggerKey:     "volume_down",                  // 物理按键触发
 
@@ -189,28 +201,13 @@ function shallowCopy(o) {
 
 // v1.3: 外部配置文件加载（multi-path 容错，缺少/损坏时回退默认值）
 function loadConfig() {
-    var sdcard = null, appPriv = null, cwd = null;
-    try { sdcard = files.getSdcardPath(); } catch (e) {}
-    try { appPriv = context.getExternalFilesDir(null).getAbsolutePath(); } catch (e) {}
-    try { cwd = files.cwd(); } catch (e) {}
-
-    var candidates = [
-        CONFIG_JSON_PATH,
-        appPriv ? files.join(appPriv, "config.json") : null,
-        cwd     ? files.join(cwd,    "config.json") : null,
-        sdcard  ? files.join(sdcard, "AutoX",     "config.json") : null,
-        sdcard  ? files.join(sdcard, "Download",  "config.json") : null,
-        sdcard  ? files.join(sdcard, "Documents", "config.json") : null
-    ];
-
-    var jsonPath = null, raw = null;
-    for (var i = 0; i < candidates.length; i++) {
-        var p = candidates[i];
-        if (!p) continue;
-        try { if (files.exists(p)) { jsonPath = p; raw = files.read(p); break; } } catch (e) {}
+    // v1.4 简化：只在 SCRIPT_DIR 找 config.json
+    if (!files.exists(CONFIG_JSON_PATH)) {
+        return DEFAULT_CONFIG;                                              // 不存在 = 用默认值
     }
-    if (!jsonPath) return DEFAULT_CONFIG;                                  // 无 config.json = 完全回退
-    if (!raw) { log("WARN", "config.json 读取失败: " + jsonPath); return DEFAULT_CONFIG; }
+    var raw;
+    try { raw = files.read(CONFIG_JSON_PATH); }
+    catch (e) { log("WARN", "config.json 读取失败: " + (e.message || e)); return DEFAULT_CONFIG; }
     if (raw && raw.charCodeAt && raw.charCodeAt(0) === 0xFEFF) raw = raw.substring(1);
 
     var parsed;
@@ -228,7 +225,7 @@ function loadConfig() {
     // 深拷贝后逐字段宽容合并
     var cfg = shallowCopy(DEFAULT_CONFIG);
     try {
-        if (typeof parsed.floaterXmlPath === "string") cfg.floaterXmlPath = parsed.floaterXmlPath;
+        // floaterXmlPath 已弃用,v1.4 起 floater.xml 强制与 .js 同目录
         if (typeof parsed.screenshotPath  === "string") cfg.screenshotPath  = parsed.screenshotPath;
         if (typeof parsed.triggerKey      === "string" && parsed.triggerKey) cfg.triggerKey = parsed.triggerKey;
         if (typeof parsed.floaterEnabled  === "boolean") cfg.floaterEnabled = parsed.floaterEnabled;
@@ -410,70 +407,30 @@ function cleanup() {
     destroyFloater();
 }
 
-/* --- v1.2 悬浮窗相关函数（完整实现见 design 文档 jsAdditions） --- */
-/**
- * 在多个常见位置查找 floater.xml:
- * 1) 用户配置的 config.floaterXmlPath（默认 /sdcard/AutoX/floater.xml）
- * 2) AutoX 应用私有目录（始终可读,无需权限）
- * 3) 脚本当前工作目录（与 .js 同目录时能命中）
- * 4) /sdcard/AutoX、Download、Documents（常见下载位置）
- * @returns {?string} 命中则返回绝对路径,否则 null
- */
-function resolveFloaterLayoutPath() {
-    var sdcard;
-    try { sdcard = files.getSdcardPath(); } catch (e) {}
-    var appPriv = null;
-    try { appPriv = context.getExternalFilesDir(null).getAbsolutePath(); } catch (e) {}
-    var cwd = null;
-    try { cwd = files.cwd(); } catch (e) {}
-
-    var candidates = [
-        config.floaterXmlPath,
-        appPriv ? files.join(appPriv, "floater.xml") : null,
-        cwd     ? files.join(cwd,    "floater.xml") : null,
-        sdcard  ? files.join(sdcard, "AutoX",     "floater.xml") : null,
-        sdcard  ? files.join(sdcard, "Download",  "floater.xml") : null,
-        sdcard  ? files.join(sdcard, "Documents", "floater.xml") : null
-    ];
-    for (var i = 0; i < candidates.length; i++) {
-        var p = candidates[i];
-        if (!p) continue;
-        try { if (files.exists(p)) return p; } catch (e) {}
-    }
-    return null;
-}
+/* --- v1.2 悬浮窗相关函数（v1.4 简化为同目录单路径） --- */
 function loadFloaterLayout() {
-    var path = resolveFloaterLayoutPath();
-    if (!path) {
-        log("ERROR", "floater 布局文件找不到,请确认:");
-        log("ERROR", "  1. floater.xml 已传到手机（与脚本同目录最方便）");
-        log("ERROR", "  2. 或修改 config.json 的 floaterXmlPath 指向实际路径");
-        log("ERROR", "已尝试: " + config.floaterXmlPath +
-            " | AutoX私有目录 | 脚本cwd | /sdcard/AutoX/Download/Documents");
+    // v1.4 简化：floater.xml 必须与 .js 同目录
+    if (!files.exists(FLOATER_XML_PATH)) {
+        log("ERROR", "floater 布局文件不存在: " + FLOATER_XML_PATH);
+        log("ERROR", "请把 floater.xml 与 autox_homework_helper.js 放在同一目录 " + SCRIPT_DIR);
         return null;
     }
-    if (path !== config.floaterXmlPath) {
-        log("INFO", "floater 布局命中: " + path + "（非配置路径,后续可改 config.floaterXmlPath 锁定）");
-    } else {
-        log("INFO", "floater 布局: " + path);
-    }
+    log("INFO", "floater 布局: " + FLOATER_XML_PATH);
     try {
-        var content = files.read(path);
+        var content = files.read(FLOATER_XML_PATH);
         // 1) 去掉可能的 UTF-8 BOM（Windows 编辑器常加）
         if (content && content.charCodeAt && content.charCodeAt(0) === 0xFEFF) {
             content = content.substring(1);
         }
         // 2) 转成 Rhino XML 对象 —— floaty.window() 期望 XML 对象,直接传字符串会 NPE
-        //    Test A(内联 E4X)和 Test B(字符串)的差异就是这个
         try {
             return new XML(content);
         } catch (e1) {
-            // 解析失败,降级返回字符串,让 floaty.window 自己再尝试
             log("WARN", "floater XML 解析失败,降级字符串: " + (e1.message || e1));
             return content;
         }
     } catch (e) {
-        log("ERROR", "读取 floater 布局失败 (" + path + "): " + (e.message || e));
+        log("ERROR", "读取 floater 布局失败 (" + FLOATER_XML_PATH + "): " + (e.message || e));
         return null;
     }
 }
