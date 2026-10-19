@@ -19,6 +19,15 @@
  *    · AutoX.js v6.0+（不依赖 Pro 7 收费 API）
  *    · Android 9.0+（Android 11+ 需授予"所有文件访问权限"或专用目录）
  *
+ *  【v1.3 新增】
+ *    · 外部配置文件 config.json（multi-path 查找：/sdcard/AutoX/AutoX 私有目录/cwd/Download/Documents）
+ *    · 配置缺失/解析失败时 WARN + 回退硬编码 DEFAULT_CONFIG（行为与 v1.2 完全一致）
+ *    · DEFAULT_CONFIG/apps/homeworkApp+aiApp 解耦，新增应用只需扩 apps.{id}
+ *    · 顶层参数：floaterEnabled/hotkeyEnabled/triggerKey/floaterXmlPath/screenshotPath
+ *    · timeouts/delays/coords 完整暴露（每调用点换成 config.*，便于机型调优）
+ *    · 旧的 PACKAGE/TIMEOUT/DELAY/SELECTOR/COORD/NEXT_QUESTION_KEY/ENABLE_FLOATER/
+ *      ENABLE_HOTKEY/FLOATER_XML_PATH 全部下沉为 DEFAULT_*（仅作回退数据源，不再被运行时引用）
+ *
  *  【v1.2 新增】
  *    · 悬浮窗控制面板（floaty.window + 外部 floater.xml 布局）
  *    · ENABLE_FLOATER / ENABLE_HOTKEY 全局开关（顶部常量，false 时回退到 v1.1 行为）
@@ -46,14 +55,12 @@
 
 // ==================== 版本 & 全局开关 ====================
 
-var SCRIPT_VERSION = "1.2.0";           // 当前脚本版本
+var SCRIPT_VERSION = "1.3.0";           // 当前脚本版本
 var DEBUG = false;                      // 调试模式：true 时输出详细日志
 var STATS = { runs: 0, success: 0, fail: 0, lastError: "" };  // 运行时统计
 
-// === v1.2 新增：悬浮窗与按键开关 ===
-var ENABLE_FLOATER   = true;                                  // 是否启用悬浮窗
-var ENABLE_HOTKEY    = true;                                  // 是否启用物理按键触发
-var FLOATER_XML_PATH = "/sdcard/AutoX/floater.xml";           // 布局文件路径（需手工放置到手机）
+// === v1.3 新增：外部配置 ===
+var CONFIG_JSON_PATH = "/sdcard/AutoX/config.json";           // 用户主配置路径
 var STATE = {
     current:      "空闲",
     lastDuration: 0,
@@ -67,112 +74,223 @@ var _lastUiUpdateAt = 0;
 
 
 /* ====================================================================
- *  第一部分：可配置参数（统一在此修改）
+ *  第一部分：默认配置（DEFAULT_CONFIG）+ 外部配置加载
+ *  —— v1.3 新增：脚本顶部所有可调参数已下沉为 DEFAULT_CONFIG。
+ *     用户可用 /sdcard/AutoX/config.json 覆盖任意字段；解析失败时回退此处。
+ *  —— 扩展新应用：只需在 DEFAULT_CONFIG.apps 下加 <id> 块，并在 apps 列表里
+ *     写好 package/prompt/selectors（参考 xuexitong/doubao）。
  * ================================================================== */
 
-// ---- 1.1 目标 APP 包名 ----
-// 备注：桌面长按 APP 图标 → 应用信息 → 即可看到包名
-var PACKAGE = {
-    XUEXITONG: "com.chaoxing.mobile",   // 学习通（超星）
-    DOUBAO:    "com.larus.nova"         // 豆包（v6.6.8 实测，桌面长按图标→应用信息 可查到包名）
-};
+// ---- 1.0 默认配置（deep-copy 源，运行时不会修改） ----
+var DEFAULT_CONFIG = {
+    version: 1,
 
+    // 顶层字符串
+    floaterXmlPath: "/sdcard/AutoX/floater.xml",   // 悬浮窗布局
+    screenshotPath: "/sdcard/Pictures/AutoX_Screenshot.png",
+    triggerKey:     "volume_down",                  // 物理按键触发
 
-// ---- 1.2 超时阈值（毫秒 ms）----
-var TIMEOUT = {
-    APP_LAUNCH:    20000,   // 启动 / 切换 APP 后，等待前台包名出现的超时
-    SCREENSHOT:     8000,   // 截图保存操作的超时
-    CONTROL_FIND:  10000,   // 单个控件查找的超时
-    AI_RESPONSE:   90000,   // 豆包 AI 回复的总超时（建议不低于 30s）
-    PASTE_MENU:     5000    // 长按弹"粘贴菜单"的超时
-};
+    // 顶层开关
+    floaterEnabled: true,
+    hotkeyEnabled:  true,
 
+    // 选中的 app id（apps 下的键名）
+    homeworkApp: "xuexitong",
+    aiApp:       "doubao",
 
-// ---- 1.3 通用延时（毫秒 ms，可按机型性能微调）----
-var DELAY = {
-    AFTER_LAUNCH:  2500,    // 启动 APP 后等待页面渲染
-    AFTER_CLICK:    500,    // 点击后等待
-    AFTER_INPUT:   1000,    // 输入文本后等待软键盘弹起
-    AFTER_PASTE:   1500,    // 粘贴后等待文本写入
-    POLL_INTERVAL:  600,    // 控件轮询间隔
-    FINAL_SETTLE:  1200,    // AI 回复结束后的稳定等待
-    LONG_PRESS:    1000     // 长按时长（粘贴菜单弹出）
-};
-
-
-// ---- 1.4 截图保存路径 ----
-// Android 11+ 受作用域存储限制，建议放在 /sdcard/Pictures/ 公共目录
-var SCREENSHOT_PATH = "/sdcard/Pictures/AutoX_Screenshot.png";
-
-
-// ---- 1.5 发送给豆包的内置提示词（与截图一起发送）----
-var DOUBAO_PROMPT = [
-    "识别图片中的所有试题，区分题型：",
-    "①选择题（单选/多选）：只输出选项答案，不要任何解析、不要多余文字。示例：A 或 AB",
-    "②简答题：精简答案，去除废话，答案排版干净，方便一键复制；不要多余解释",
-    "所有答案输出不要多余开场白，直接输出答案内容。"
-].join("\n");
-
-
-// ---- 1.6 无障碍控件选择器（按 id > desc > text 顺序尝试）----
-// APP 版本更新会改变 ID，下方为常见值；如失效请改用坐标方案
-var SELECTOR = {
-    // —— 学习通 ——
-    XUEXITONG: {
-        // 答案输入框（多版本兼容：依次尝试 id → desc）
-        ANSWER_INPUT_ID:   ["editText2", "answer_content_et", "et_content", "rich_editor"],
-        ANSWER_INPUT_DESC: ["作答区", "请输入答案", "题目作答"],
-        // 提交按钮（备用，本脚本暂不自动提交）
-        SUBMIT_DESC:       ["提交答案", "保存"]
+    // 应用清单（新增应用只需在这里加 <id> 块 + 调整 homeworkApp/aiApp）
+    apps: {
+        xuexitong: {
+            package:     "com.chaoxing.mobile",
+            name:        "xuexitong",
+            displayName: "学习通",
+            selectors: {
+                answerInputId:   ["editText2", "answer_content_et", "et_content", "rich_editor"],
+                answerInputDesc: ["作答区", "请输入答案", "题目作答"],
+                submitDesc:      ["提交答案", "保存"]
+            }
+        },
+        doubao: {
+            package:     "com.larus.nova",
+            name:        "doubao",
+            displayName: "豆包",
+            prompt: [
+                "识别图片中的所有试题，区分题型：",
+                "①选择题（单选/多选）：只输出选项答案，不要任何解析、不要多余文字。示例：A 或 AB",
+                "②简答题：精简答案，去除废话，答案排版干净，方便一键复制；不要多余解释",
+                "所有答案输出不要多余开场白，直接输出答案内容。"
+            ].join("\n"),
+            selectors: {
+                inputBoxId:    ["msg_et", "et_message", "input_edit"],
+                inputBoxDesc:  ["输入消息", "输入框", "请输入消息"],
+                sendBtnDesc:   ["发送"],
+                sendBtnId:     ["send_btn", "iv_send", "btn_send"],
+                attachBtnId:   ["iv_plus", "iv_more", "btn_more"],
+                attachBtnDesc: ["更多功能", "附件"],
+                albumDesc:     ["相册", "图片", "从相册选择", "从手机相册选择"],
+                albumText:     ["相册", "图片"],
+                loadingDesc:   ["生成中", "正在生成", "停止生成"],
+                finishedDesc:  ["重新生成", "复制", "已生成"]
+            }
+        }
     },
-    // —— 豆包 ——
-    DOUBAO: {
-        // 输入框
-        INPUT_BOX_ID:    ["msg_et", "et_message", "input_edit"],
-        INPUT_BOX_DESC:  ["输入消息", "输入框", "请输入消息"],
-        // 发送按钮
-        SEND_BTN_DESC:   ["发送"],
-        SEND_BTN_ID:     ["send_btn", "iv_send", "btn_send"],
-        // 附件 / "+" 按钮（用于插入图片）
-        ATTACH_BTN_ID:   ["iv_plus", "iv_more", "btn_more"],
-        ATTACH_BTN_DESC: ["更多功能", "附件"],
-        // 附件菜单中的"相册/图片"选项
-        ALBUM_DESC:      ["相册", "图片", "从相册选择", "从手机相册选择"],
-        ALBUM_TEXT:      ["相册", "图片"],
-        // 加载中提示（用于判断 AI 是否还在生成）
-        LOADING_DESC:    ["生成中", "正在生成", "停止生成"],
-        // 完成提示（生成完毕的特征之一）
-        FINISHED_DESC:   ["重新生成", "复制", "已生成"]
+
+    // 超时（ms）
+    timeouts: {
+        appLaunch:   20000,
+        screenshot:   8000,
+        controlFind: 10000,
+        aiResponse:  90000,
+        pasteMenu:    5000
+    },
+
+    // 延时（ms）
+    delays: {
+        afterLaunch:  2500,
+        afterClick:    500,
+        afterInput:   1000,
+        afterPaste:   1500,
+        pollInterval:  600,
+        finalSettle:  1200,
+        longPress:    1000
+    },
+
+    // 坐标（按 1080×2400 比例设计，可按比例换算）
+    coords: {
+        xuexitong: {
+            answerInput: { x: 540, y: 1900 },
+            pasteMenu:   { x: 540, y: 1400 }
+        },
+        doubao: {
+            attachBtn:    { x:  60, y: 2200 },
+            inputBox:     { x: 540, y: 2200 },
+            sendBtn:      { x: 990, y: 2200 },
+            albumOption:  { x: 180, y: 1900 },
+            firstPhoto:   { x: 120, y:  500 },
+            photoConfirm: { x: 990, y:  100 }
+        }
     }
 };
 
 
-// ---- 1.7 坐标备用方案（按 1080×2400 屏幕比例设计）----
-// ⚠️ 不同机型需按比例换算：
-//     实际 X = (本机屏幕宽度  / 1080) × 设计 X
-//     实际 Y = (本机屏幕高度  / 2400) × 设计 Y
-// 也可在 AutoX 中开启"布局分析"悬浮窗，定位坐标后填入。
-var COORD = {
-    // —— 豆包 ——
-    DOUBAO: {
-        ATTACH_BTN:    { x:  60, y: 2200 },  // 输入框左侧"+"按钮
-        INPUT_BOX:     { x: 540, y: 2200 },  // 输入框中心
-        SEND_BTN:      { x: 990, y: 2200 },  // 右下角发送按钮
-        ALBUM_OPTION:  { x: 180, y: 1900 },  // 底部菜单的"相册"位置
-        FIRST_PHOTO:   { x: 120, y:  500 },  // 相册第一张图（左上角）
-        PHOTO_CONFIRM: { x: 990, y:  100 }   // 相册右上角"完成"
-    },
-    // —— 学习通 ——
-    XUEXITONG: {
-        ANSWER_INPUT:  { x: 540, y: 1900 },  // 答题输入框中心
-        PASTE_MENU:    { x: 540, y: 1400 }   // 长按弹出的"粘贴"菜单位置
+// ---- 1.1 shallowCopy / loadConfig ----
+function shallowCopy(o) {
+    var out = {};
+    if (!o) return out;
+    for (var k in o) {
+        if (!o.hasOwnProperty(k)) continue;
+        var v = o[k];
+        if (Array.isArray(v)) out[k] = v.slice();
+        else if (v && typeof v === "object") out[k] = shallowCopy(v);
+        else out[k] = v;
     }
-};
+    return out;
+}
+
+// v1.3: 外部配置文件加载（multi-path 容错，缺少/损坏时回退默认值）
+function loadConfig() {
+    var sdcard = null, appPriv = null, cwd = null;
+    try { sdcard = files.getSdcardPath(); } catch (e) {}
+    try { appPriv = context.getExternalFilesDir(null).getAbsolutePath(); } catch (e) {}
+    try { cwd = files.cwd(); } catch (e) {}
+
+    var candidates = [
+        CONFIG_JSON_PATH,
+        appPriv ? files.join(appPriv, "config.json") : null,
+        cwd     ? files.join(cwd,    "config.json") : null,
+        sdcard  ? files.join(sdcard, "AutoX",     "config.json") : null,
+        sdcard  ? files.join(sdcard, "Download",  "config.json") : null,
+        sdcard  ? files.join(sdcard, "Documents", "config.json") : null
+    ];
+
+    var jsonPath = null, raw = null;
+    for (var i = 0; i < candidates.length; i++) {
+        var p = candidates[i];
+        if (!p) continue;
+        try { if (files.exists(p)) { jsonPath = p; raw = files.read(p); break; } } catch (e) {}
+    }
+    if (!jsonPath) return DEFAULT_CONFIG;                                  // 无 config.json = 完全回退
+    if (!raw) { log("WARN", "config.json 读取失败: " + jsonPath); return DEFAULT_CONFIG; }
+    if (raw && raw.charCodeAt && raw.charCodeAt(0) === 0xFEFF) raw = raw.substring(1);
+
+    var parsed;
+    try { parsed = JSON.parse(raw); } catch (e) {
+        log("WARN", "config.json JSON.parse 失败: " + (e.message || e));
+        return DEFAULT_CONFIG;
+    }
+    if (!parsed || typeof parsed !== "object") {
+        log("WARN", "config.json 顶层不是对象"); return DEFAULT_CONFIG;
+    }
+    if (parsed.version !== 1) {
+        log("WARN", "config.json version != 1（当前=" + parsed.version + "）"); return DEFAULT_CONFIG;
+    }
+
+    // 深拷贝后逐字段宽容合并
+    var cfg = shallowCopy(DEFAULT_CONFIG);
+    try {
+        if (typeof parsed.floaterXmlPath === "string") cfg.floaterXmlPath = parsed.floaterXmlPath;
+        if (typeof parsed.screenshotPath  === "string") cfg.screenshotPath  = parsed.screenshotPath;
+        if (typeof parsed.triggerKey      === "string" && parsed.triggerKey) cfg.triggerKey = parsed.triggerKey;
+        if (typeof parsed.floaterEnabled  === "boolean") cfg.floaterEnabled = parsed.floaterEnabled;
+        if (typeof parsed.hotkeyEnabled   === "boolean") cfg.hotkeyEnabled  = parsed.hotkeyEnabled;
+        if (typeof parsed.homeworkApp     === "string")  cfg.homeworkApp    = parsed.homeworkApp;
+        if (typeof parsed.aiApp           === "string")  cfg.aiApp          = parsed.aiApp;
+
+        if (parsed.apps && typeof parsed.apps === "object") {
+            for (var aid in cfg.apps) {
+                if (!cfg.apps.hasOwnProperty(aid)) continue;
+                var src = parsed.apps[aid]; var dst = cfg.apps[aid];
+                if (!src || typeof src !== "object") continue;
+                if (typeof src.package === "string") dst.package = src.package;
+                if (typeof src.name === "string") dst.name = src.name;
+                if (typeof src.displayName === "string") dst.displayName = src.displayName;
+                if (typeof src.prompt === "string") dst.prompt = src.prompt;
+                if (src.selectors && typeof src.selectors === "object") {
+                    for (var sk in dst.selectors) {
+                        if (!dst.selectors.hasOwnProperty(sk)) continue;
+                        var sv = src.selectors[sk];
+                        if (Array.isArray(sv) || typeof sv === "string") dst.selectors[sk] = sv;
+                    }
+                }
+            }
+        }
+        if (parsed.timeouts && typeof parsed.timeouts === "object") {
+            for (var k in cfg.timeouts) {
+                if (!cfg.timeouts.hasOwnProperty(k)) continue;
+                var v = parsed.timeouts[k];
+                if (typeof v === "number" && v > 0) cfg.timeouts[k] = v;
+            }
+        }
+        if (parsed.delays && typeof parsed.delays === "object") {
+            for (var k2 in cfg.delays) {
+                if (!cfg.delays.hasOwnProperty(k2)) continue;
+                var v2 = parsed.delays[k2];
+                if (typeof v2 === "number" && v2 >= 0) cfg.delays[k2] = v2;
+            }
+        }
+        if (parsed.coords && typeof parsed.coords === "object") {
+            for (var ck in cfg.coords) {
+                if (!cfg.coords.hasOwnProperty(ck)) continue;
+                var csrc = parsed.coords[ck], cdst = cfg.coords[ck];
+                if (!csrc || typeof csrc !== "object") continue;
+                for (var kk in cdst) {
+                    if (!cdst.hasOwnProperty(kk)) continue;
+                    var cv = csrc[kk];
+                    if (cv && typeof cv.x === "number" && typeof cv.y === "number") cdst[kk] = cv;
+                }
+            }
+        }
+    } catch (e) {
+        log("WARN", "config 字段合并异常: " + (e.message || e));
+        return DEFAULT_CONFIG;
+    }
+    log("INFO", "已加载外部配置: " + jsonPath);
+    return cfg;
+}
 
 
-// ---- 1.8 触发"下一题"的按键 ----
-// 常用值："volume_down"（音量减）、"volume_up"（音量加）、"enter"（回车）
-var NEXT_QUESTION_KEY = "volume_down";
+// ---- 1.2 v1.3: 模块级配置（外部 config.json 加载后的运行时单例） ----
+var config = loadConfig();
 
 
 /* ====================================================================
@@ -253,18 +371,20 @@ function preflightCheck() {
     log("INFO", "✓ 无障碍服务已开启");
 
     // 2. 学习通是否安装（v6.6.x 上用 PackageManager 最可靠）
-    if (!isPackageInstalled(PACKAGE.XUEXITONG)) {
-        showToast("未检测到学习通 APP（" + PACKAGE.XUEXITONG + "）", "long");
+    var hwPkg = config.apps[config.homeworkApp].package;
+    if (!isPackageInstalled(hwPkg)) {
+        showToast("未检测到作业 APP（" + hwPkg + "）", "long");
         return false;
     }
-    log("INFO", "✓ 学习通已安装：" + PACKAGE.XUEXITONG);
+    log("INFO", "✓ 作业 APP 已安装：" + hwPkg);
 
     // 3. 豆包是否安装（v6.6.x 上用 PackageManager 最可靠）
-    if (!isPackageInstalled(PACKAGE.DOUBAO)) {
-        showToast("未检测到豆包 APP（" + PACKAGE.DOUBAO + "）", "long");
+    var aiPkg = config.apps[config.aiApp].package;
+    if (!isPackageInstalled(aiPkg)) {
+        showToast("未检测到 AI APP（" + aiPkg + "）", "long");
         return false;
     }
-    log("INFO", "✓ 豆包已安装：" + PACKAGE.DOUBAO);
+    log("INFO", "✓ AI APP 已安装：" + aiPkg);
 
     log("INFO", "=== 预检通过 ===");
     return true;
@@ -275,8 +395,8 @@ function preflightCheck() {
  */
 function cleanup() {
     try {
-        if (files.exists(SCREENSHOT_PATH)) files.remove(SCREENSHOT_PATH);
-        log("INFO", "已清理临时截图：" + SCREENSHOT_PATH);
+        if (files.exists(config.screenshotPath)) files.remove(config.screenshotPath);
+        log("INFO", "已清理临时截图：" + config.screenshotPath);
     } catch (e) {
         log("WARN", "清理临时文件失败：" + e.message);
     }
@@ -293,7 +413,7 @@ function cleanup() {
 /* --- v1.2 悬浮窗相关函数（完整实现见 design 文档 jsAdditions） --- */
 /**
  * 在多个常见位置查找 floater.xml:
- * 1) 用户配置的 FLOATER_XML_PATH（默认 /sdcard/AutoX/floater.xml）
+ * 1) 用户配置的 config.floaterXmlPath（默认 /sdcard/AutoX/floater.xml）
  * 2) AutoX 应用私有目录（始终可读,无需权限）
  * 3) 脚本当前工作目录（与 .js 同目录时能命中）
  * 4) /sdcard/AutoX、Download、Documents（常见下载位置）
@@ -308,7 +428,7 @@ function resolveFloaterLayoutPath() {
     try { cwd = files.cwd(); } catch (e) {}
 
     var candidates = [
-        FLOATER_XML_PATH,
+        config.floaterXmlPath,
         appPriv ? files.join(appPriv, "floater.xml") : null,
         cwd     ? files.join(cwd,    "floater.xml") : null,
         sdcard  ? files.join(sdcard, "AutoX",     "floater.xml") : null,
@@ -327,13 +447,13 @@ function loadFloaterLayout() {
     if (!path) {
         log("ERROR", "floater 布局文件找不到,请确认:");
         log("ERROR", "  1. floater.xml 已传到手机（与脚本同目录最方便）");
-        log("ERROR", "  2. 或修改脚本顶部 FLOATER_XML_PATH 指向实际路径");
-        log("ERROR", "已尝试: " + FLOATER_XML_PATH +
+        log("ERROR", "  2. 或修改 config.json 的 floaterXmlPath 指向实际路径");
+        log("ERROR", "已尝试: " + config.floaterXmlPath +
             " | AutoX私有目录 | 脚本cwd | /sdcard/AutoX/Download/Documents");
         return null;
     }
-    if (path !== FLOATER_XML_PATH) {
-        log("INFO", "floater 布局命中: " + path + "（非默认,后续可改 FLOATER_XML_PATH 锁定）");
+    if (path !== config.floaterXmlPath) {
+        log("INFO", "floater 布局命中: " + path + "（非配置路径,后续可改 config.floaterXmlPath 锁定）");
     } else {
         log("INFO", "floater 布局: " + path);
     }
@@ -358,7 +478,7 @@ function loadFloaterLayout() {
     }
 }
 function initFloater() {
-    if (!ENABLE_FLOATER) { log("INFO", "ENABLE_FLOATER=false, 跳过悬浮窗初始化"); return; }
+    if (!config.floaterEnabled) { log("INFO", "config.floaterEnabled=false, 跳过悬浮窗初始化"); return; }
     var xml = loadFloaterLayout();
     if (!xml) return;
     var posX = 80, posY = 200;
@@ -495,10 +615,10 @@ function findByPriority(ids, descs, texts) {
  */
 function waitForControl(ids, descs, texts, name_desc) {
     var t0 = Date.now();
-    while (Date.now() - t0 < TIMEOUT.CONTROL_FIND) {
+    while (Date.now() - t0 < config.timeouts.controlFind) {
         var w = findByPriority(ids, descs, texts);
         if (w) return w;
-        sleep(DELAY.POLL_INTERVAL);
+        sleep(config.delays.pollInterval);
     }
     showToast("查找控件超时：" + (name_desc || "未知目标"), "long");
     return null;
@@ -549,9 +669,9 @@ function launchAndWait(pkg, label) {
     }
     // 轮询直到前台包名匹配
     var t0 = Date.now();
-    while (Date.now() - t0 < TIMEOUT.APP_LAUNCH) {
+    while (Date.now() - t0 < config.timeouts.appLaunch) {
         if (currentPackage() === pkg) break;
-        sleep(DELAY.POLL_INTERVAL);
+        sleep(config.delays.pollInterval);
     }
     if (currentPackage() !== pkg) {
         showToast(
@@ -560,7 +680,7 @@ function launchAndWait(pkg, label) {
         );
         return false;
     }
-    sleep(DELAY.AFTER_LAUNCH); // 给页面渲染留时间
+    sleep(config.delays.afterLaunch); // 给页面渲染留时间
     return true;
 }
 
@@ -571,7 +691,7 @@ function launchAndWait(pkg, label) {
 function takeScreenshot(path) {
     try { if (files.exists(path)) files.remove(path); } catch (e) {}
     var t0 = Date.now();
-    while (Date.now() - t0 < TIMEOUT.SCREENSHOT) {
+    while (Date.now() - t0 < config.timeouts.screenshot) {
         try {
             // 方案 A：captureScreen 直接保存为文件
             if (captureScreen(path)) {
@@ -590,7 +710,7 @@ function takeScreenshot(path) {
                 console.warn("截图异常：", e1.message, "|", e2.message);
             }
         }
-        sleep(DELAY.POLL_INTERVAL);
+        sleep(config.delays.pollInterval);
     }
     showToast("截图失败，请检查存储权限", "long");
     return null;
@@ -638,19 +758,19 @@ function pasteIntoInput(inputBox, coordFallback) {
     }
     if (!longClicked) {
         // 退化：使用 press 模拟长按
-        press(x, y, DELAY.LONG_PRESS);
+        press(x, y, config.delays.longPress);
     }
-    sleep(DELAY.AFTER_CLICK * 2);
+    sleep(config.delays.afterClick * 2);
 
     // 点击"粘贴"菜单（先按控件查找，找不到再坐标点击）
     clickSmart(
         ["paste_text", "tv_paste", "menu_paste"],
         ["粘贴", "Paste"],
         ["粘贴"],
-        COORD.XUEXITONG.PASTE_MENU,
+        config.coords.xuexitong.pasteMenu,
         "粘贴菜单"
     );
-    sleep(DELAY.AFTER_PASTE);
+    sleep(config.delays.afterPaste);
     return true;
 }
 
@@ -664,42 +784,44 @@ function pasteIntoInput(inputBox, coordFallback) {
  * @returns {boolean} 是否成功提交
  */
 function doubaoUploadAndAsk() {
+    var aiSel = config.apps[config.aiApp].selectors;
+    var aiCo  = config.coords[config.aiApp];
     // A0. 如果不在聊天界面，先尝试进入（点"新建对话"）
-    if (!findByPriority(SELECTOR.DOUBAO.INPUT_BOX_ID, SELECTOR.DOUBAO.INPUT_BOX_DESC, null)) {
-        console.log("豆包当前不在聊天界面，尝试新建对话…");
+    if (!findByPriority(aiSel.inputBoxId, aiSel.inputBoxDesc, null)) {
+        console.log("AI APP 当前不在聊天界面，尝试新建对话…");
         var newChat = findByPriority(null,
             ["新建对话", "开始聊天", "发起对话", "发消息", "新建聊天"], null);
         if (newChat) {
             newChat.click();
-            sleep(DELAY.AFTER_LAUNCH);
+            sleep(config.delays.afterLaunch);
         } else {
-            showToast("请手动进入豆包聊天界面", "long");
+            showToast("请手动进入 " + config.apps[config.aiApp].displayName + " 聊天界面", "long");
             return false;
         }
     }
 
     // A1. 点击附件"+"按钮
     if (!clickSmart(
-            SELECTOR.DOUBAO.ATTACH_BTN_ID,
-            SELECTOR.DOUBAO.ATTACH_BTN_DESC,
+            aiSel.attachBtnId,
+            aiSel.attachBtnDesc,
             null,
-            COORD.DOUBAO.ATTACH_BTN,
-            "豆包附件按钮"
+            aiCo.attachBtn,
+            (config.apps[config.aiApp].displayName || "AI") + "附件按钮"
     )) return false;
-    sleep(DELAY.AFTER_CLICK * 2);
+    sleep(config.delays.afterClick * 2);
 
     // A2. 在弹出的菜单中点击"相册/图片"
     if (!clickSmart(
             null,
-            SELECTOR.DOUBAO.ALBUM_DESC,
-            SELECTOR.DOUBAO.ALBUM_TEXT,
-            COORD.DOUBAO.ALBUM_OPTION,
-            "豆包相册菜单"
+            aiSel.albumDesc,
+            aiSel.albumText,
+            aiCo.albumOption,
+            (config.apps[config.aiApp].displayName || "AI") + "相册菜单"
     )) {
         showToast("找不到'相册'菜单，请检查 APP 版本或修改坐标", "long");
         return false;
     }
-    sleep(DELAY.AFTER_CLICK * 3); // 等待系统相册加载
+    sleep(config.delays.afterClick * 3); // 等待系统相册加载
 
     // A3. 选择截图（点相册中第一张图）
     var firstPhoto = id("iv_photo").findOnce() ||
@@ -707,53 +829,53 @@ function doubaoUploadAndAsk() {
     if (firstPhoto) {
         var pb = firstPhoto.bounds();
         if (pb) click(pb.centerX(), pb.centerY());
-        else click(COORD.DOUBAO.FIRST_PHOTO.x, COORD.DOUBAO.FIRST_PHOTO.y);
+        else click(aiCo.firstPhoto.x, aiCo.firstPhoto.y);
     } else {
-        click(COORD.DOUBAO.FIRST_PHOTO.x, COORD.DOUBAO.FIRST_PHOTO.y);
+        click(aiCo.firstPhoto.x, aiCo.firstPhoto.y);
     }
-    sleep(DELAY.AFTER_CLICK * 2);
+    sleep(config.delays.afterClick * 2);
 
     // A4. 确认选择（点击"完成"或"发送"）
     var confirmClicked = clickSmart(
         null,
         ["完成", "确定", "发送"],
         ["完成", "确定"],
-        COORD.DOUBAO.PHOTO_CONFIRM,
+        aiCo.photoConfirm,
         "相册确认按钮"
     );
     if (!confirmClicked) {
         // 某些版本选择后自动回到聊天界面，无需手动确认
         console.warn("未找到'完成'按钮，假设已自动确认");
     }
-    sleep(DELAY.AFTER_CLICK * 3);
+    sleep(config.delays.afterClick * 3);
 
     // A5. 等待回到聊天界面，输入框重新可见
     var inputBox = waitForControl(
-        SELECTOR.DOUBAO.INPUT_BOX_ID,
-        SELECTOR.DOUBAO.INPUT_BOX_DESC,
+        aiSel.inputBoxId,
+        aiSel.inputBoxDesc,
         null,
-        "豆包输入框"
+        (config.apps[config.aiApp].displayName || "AI") + "输入框"
     );
     if (!inputBox) return false;
 
     // A6. 在输入框中设置文本（先点击使其获得焦点）
     try {
         inputBox.click();
-        sleep(DELAY.AFTER_CLICK);
-        inputBox.setText(DOUBAO_PROMPT);
+        sleep(config.delays.afterClick);
+        inputBox.setText(config.apps[config.aiApp].prompt);
     } catch (e) {
         showToast("输入文本失败：" + e.message, "long");
         return false;
     }
-    sleep(DELAY.AFTER_INPUT);
+    sleep(config.delays.afterInput);
 
     // A7. 发送
     if (!clickSmart(
-            SELECTOR.DOUBAO.SEND_BTN_ID,
-            SELECTOR.DOUBAO.SEND_BTN_DESC,
+            aiSel.sendBtnId,
+            aiSel.sendBtnDesc,
             null,
-            COORD.DOUBAO.SEND_BTN,
-            "豆包发送按钮"
+            aiCo.sendBtn,
+            (config.apps[config.aiApp].displayName || "AI") + "发送按钮"
     )) return false;
     return true;
 }
@@ -766,27 +888,29 @@ function doubaoWaitResponse() {
     var t0 = Date.now();
     var sawLoading = false;
     var sawFinish = false;
+    var aiSel = config.apps[config.aiApp].selectors;
+    var aiName = config.apps[config.aiApp].displayName || "AI";
 
     // B1. 先等待"生成中"出现（表示 AI 正在处理）
-    while (Date.now() - t0 < TIMEOUT.AI_RESPONSE / 2) {
-        var loading = findByPriority(null, SELECTOR.DOUBAO.LOADING_DESC, null);
+    while (Date.now() - t0 < config.timeouts.aiResponse / 2) {
+        var loading = findByPriority(null, aiSel.loadingDesc, null);
         if (loading) { sawLoading = true; break; }
         // 如果 AI 回复极快，可能直接看到完成特征
-        var finish = findByPriority(null, SELECTOR.DOUBAO.FINISHED_DESC, null);
+        var finish = findByPriority(null, aiSel.finishedDesc, null);
         if (finish) { sawFinish = true; break; }
-        sleep(DELAY.POLL_INTERVAL);
+        sleep(config.delays.pollInterval);
     }
 
     // B2. 等待"生成中"消失（表示生成完成）
     if (sawLoading) {
-        while (Date.now() - t0 < TIMEOUT.AI_RESPONSE) {
-            var stillLoading = findByPriority(null, SELECTOR.DOUBAO.LOADING_DESC, null);
+        while (Date.now() - t0 < config.timeouts.aiResponse) {
+            var stillLoading = findByPriority(null, aiSel.loadingDesc, null);
             if (!stillLoading) { sawFinish = true; break; }
-            sleep(DELAY.POLL_INTERVAL);
+            sleep(config.delays.pollInterval);
         }
         if (!sawFinish) {
             showToast(
-                "豆包回复超时（" + Math.round(TIMEOUT.AI_RESPONSE / 1000) + "s）",
+                aiName + "回复超时（" + Math.round(config.timeouts.aiResponse / 1000) + "s）",
                 "long"
             );
             return null;
@@ -794,7 +918,7 @@ function doubaoWaitResponse() {
     }
 
     // 额外等待文本完全稳定
-    sleep(DELAY.FINAL_SETTLE);
+    sleep(config.delays.finalSettle);
 
     // B3. 抓取最新一条 AI 消息文本（按优先级尝试多种策略）
     var answer = "";
@@ -841,24 +965,29 @@ function processOneQuestion() {
     STATS.runs += 1;
     log("INFO", "===== 开始第 " + STATS.runs + " 题 =====");
 
-    // 1) 切到学习通
-    if (!launchAndWait(PACKAGE.XUEXITONG, "学习通")) {
-        STATS.fail += 1; STATS.lastError = "切学习通失败";
+    var hwLabel = config.apps[config.homeworkApp].displayName || "作业APP";
+    var aiLabel = config.apps[config.aiApp].displayName || "AI";
+    var hwPkg = config.apps[config.homeworkApp].package;
+    var aiPkg = config.apps[config.aiApp].package;
+
+    // 1) 切到作业 APP
+    if (!launchAndWait(hwPkg, hwLabel)) {
+        STATS.fail += 1; STATS.lastError = "切" + hwLabel + "失败";
         return false;
     }
 
     // 2) 截图
     showToast("正在截图…");
-    var imgPath = takeScreenshot(SCREENSHOT_PATH);
+    var imgPath = takeScreenshot(config.screenshotPath);
     if (!imgPath) {
         STATS.fail += 1; STATS.lastError = "截图失败";
         return false;
     }
     log("INFO", "截图已保存：" + imgPath);
 
-    // 3) 切到豆包
-    if (!launchAndWait(PACKAGE.DOUBAO, "豆包")) {
-        STATS.fail += 1; STATS.lastError = "切豆包失败";
+    // 3) 切到 AI APP
+    if (!launchAndWait(aiPkg, aiLabel)) {
+        STATS.fail += 1; STATS.lastError = "切" + aiLabel + "失败";
         return false;
     }
 
@@ -885,26 +1014,28 @@ function processOneQuestion() {
     }
     showToast("答案已写入剪贴板");
 
-    // 7) 切回学习通
-    if (!launchAndWait(PACKAGE.XUEXITONG, "学习通")) {
-        STATS.fail += 1; STATS.lastError = "返回学习通失败";
+    // 7) 切回作业 APP
+    if (!launchAndWait(hwPkg, hwLabel)) {
+        STATS.fail += 1; STATS.lastError = "返回" + hwLabel + "失败";
         return false;
     }
 
     // 8) 长按输入框 → 粘贴
     showToast("正在粘贴答案…");
+    var hwSel = config.apps[config.homeworkApp].selectors;
+    var hwCo  = config.coords[config.homeworkApp];
     var inputBox = waitForControl(
-        SELECTOR.XUEXITONG.ANSWER_INPUT_ID,
-        SELECTOR.XUEXITONG.ANSWER_INPUT_DESC,
+        hwSel.answerInputId,
+        hwSel.answerInputDesc,
         null,
-        "学习通答案输入框"
+        hwLabel + "答案输入框"
     );
     if (!inputBox) {
         STATS.fail += 1; STATS.lastError = "找不到答题输入框";
         showToast("找不到答题输入框，请手动粘贴", "long");
         return false;
     }
-    if (!pasteIntoInput(inputBox, COORD.XUEXITONG.ANSWER_INPUT)) {
+    if (!pasteIntoInput(inputBox, hwCo.answerInput)) {
         STATS.fail += 1; STATS.lastError = "粘贴失败";
         return false;
     }
@@ -937,7 +1068,7 @@ function onTriggerNextQuestion() {
             if (ok) {
                 showToast(
                     "本题已完成 ✓\n答案已粘贴到输入框。\n" +
-                    "请检查无误后，按 " + NEXT_QUESTION_KEY + " 进入下一题",
+                    "请检查无误后，按 " + config.triggerKey + " 进入下一题",
                     "long"
                 );
             } else {
@@ -960,6 +1091,10 @@ function onTriggerNextQuestion() {
  * 入口
  */
 function main() {
+    // 0) v1.3: 加载外部配置（DEFAULT_CONFIG 已被覆盖，模块顶部已有 var config = loadConfig()）
+    log("INFO", "脚本就绪配置：app=" + config.apps[config.homeworkApp].displayName +
+                " -> AI=" + config.apps[config.aiApp].displayName +
+                " triggerKey=" + config.triggerKey);
     // 1) 启动预检（无障碍服务 + 两 APP 是否安装）
     if (!preflightCheck()) {
         log("ERROR", "预检未通过，脚本退出");
@@ -974,24 +1109,24 @@ function main() {
     try { initFloater(); }
     catch (e) { log("WARN", "initFloater 失败: " + (e.message || e)); }
 
-    // 3) 注册按键监听（v1.2: ENABLE_HOTKEY=false 时跳过物理按键，仅靠悬浮窗按钮触发）
-    if (ENABLE_HOTKEY) {
+    // 3) 注册按键监听（v1.3: config.hotkeyEnabled=false 时跳过物理按键，仅靠悬浮窗按钮触发）
+    if (config.hotkeyEnabled) {
         events.observeKey();
-        events.onKeyDown(NEXT_QUESTION_KEY, function (event) {
+        events.onKeyDown(config.triggerKey, function (event) {
             // 仅响应"按下"瞬间；忽略抬起与长按重复
             if (event.getAction() === 0) {
                 onTriggerNextQuestion();
             }
         });
     } else {
-        log("INFO", "ENABLE_HOTKEY=false, 跳过物理按键监听（仅靠悬浮窗按钮触发）");
+        log("INFO", "config.hotkeyEnabled=false, 跳过物理按键监听（仅靠悬浮窗按钮触发）");
     }
 
     // 4) 提示就绪
     var readyMsg =
         "脚本就绪 v" + SCRIPT_VERSION + "\n" +
         "DEBUG=" + DEBUG + "\n" +
-        "请按 " + NEXT_QUESTION_KEY + " 开始第一题";
+        "请按 " + config.triggerKey + " 开始第一题";
     showToast(readyMsg, "long");
 
     // 5) 主线程保持运行（setInterval 是无副作用保活）
@@ -1027,14 +1162,14 @@ function printUsage() {
         "",
         "【3】脚本局限性",
         "  ① APP 版本更新会导致控件 ID 变化 → 脚本失效",
-        "     解决：抓取新 ID 后修改脚本顶部 SELECTOR 配置",
+        "     解决：抓取新 ID 后修改 config.json 对应应用的 selectors 字段",
         "  ② 弹窗、广告、版本升级提示会干扰控件查找",
         "     解决：使用前手动关闭所有弹窗广告",
         "  ③ 学习通等平台已上线'无障碍自动化'检测模型",
         "     风险：可能触发风控、账号封禁、学术不端认定",
         "  ④ 不同机型屏幕比例不同，坐标需自行实测修改",
         "     解决：开启 AutoX 布局分析悬浮窗定位坐标",
-        "  ⑤ 单次流程仅处理一题，多题需按 " + NEXT_QUESTION_KEY + " 重复触发",
+        "  ⑤ 单次流程仅处理一题，多题需按 " + config.triggerKey + " 重复触发",
         "=========================================================",
         ""
     ];
